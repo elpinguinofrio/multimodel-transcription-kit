@@ -1,0 +1,8 @@
+{
+  "audio_sha256": "9d828345ddfb9ddb48f8ad797b147bc3362d71fd77c0044d757b610f63a3e6d5",
+  "status": "pending-human-transcription",
+  "human_verified": false,
+  "transcript_file": "sample-120s-diary/human-transcription-sample-120s-diary.txt",
+  "process": "Listen and type verbatim without looking at model output. Resolve unclear spans before scoring.",
+  "normalization": "Unicode NFC; lowercase; yo-to-ye; punctuation becomes spaces; collapse whitespace; preserve fillers, repetitions and number spelling."
+}

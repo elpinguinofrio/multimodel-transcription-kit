@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "audio_path": "sample-120s-diary/sample-120s-diary.wav",
+  "duration_seconds": 120,
+  "sample_rate_hz": 48000,
+  "channels": 1,
+  "sample_width_bytes": 2,
+  "sha256": "9d828345ddfb9ddb48f8ad797b147bc3362d71fd77c0044d757b610f63a3e6d5",
+  "human_verified_reference": false,
+  "comparison_status": "owner_reviewed_qualitative_comparison"
+}
