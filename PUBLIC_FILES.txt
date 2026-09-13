@@ -9,6 +9,10 @@ benchmark/manifest.json
 benchmark/reference.template.json
 benchmark/sample-120s-diary/sample-120s-diary.wav
 benchmark/transcribe.py
+examples/quickstart/.env.example
+examples/quickstart/README.md
+examples/quickstart/config.ini
+examples/quickstart/run.py
 pyproject.toml
 scripts/score_transcripts.py
 scripts/verify.py

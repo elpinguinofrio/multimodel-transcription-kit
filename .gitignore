@@ -18,3 +18,8 @@ benchmark/reference.local.json
 benchmark/sample-120s-diary/README.md
 benchmark/sample-120s-diary/human-transcription-sample-120s-diary.txt
 benchmark/sample-120s-diary/runs/
+
+# example app local state
+examples/quickstart/.env
+examples/quickstart/transcripts/
+!examples/quickstart/.env.example
