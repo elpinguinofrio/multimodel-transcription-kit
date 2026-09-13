@@ -4,9 +4,7 @@ LICENSE
 MANIFEST.in
 PUBLIC_FILES.txt
 README.md
-benchmark/DATA_LICENSE.md
 benchmark/README.md
-benchmark/REFERENCE.md
 benchmark/manifest.json
 benchmark/reference.template.json
 benchmark/sample-120s-diary/sample-120s-diary.wav

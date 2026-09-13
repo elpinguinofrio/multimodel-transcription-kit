@@ -29,4 +29,4 @@ result = transcribe_large("recording.m4a")
 ```
 
 Python 3.10+; conversion and splitting require `ffmpeg` and `ffprobe`. Code is
-[MIT licensed](LICENSE); benchmark audio has [separate terms](benchmark/DATA_LICENSE.md).
+[MIT licensed](LICENSE); benchmark audio has [separate terms](benchmark/README.md#audio-terms).
