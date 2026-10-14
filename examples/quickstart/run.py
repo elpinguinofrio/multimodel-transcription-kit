@@ -44,7 +44,7 @@ def build_limiter(cfg: configparser.ConfigParser):
 
 
 def transcribe_one(kind: str, opts: dict, audio: Path, language: str, out_dir: Path,
-                   limiter=None) -> dict:
+                   limiter=None, usage_log=None) -> dict:
     """Dispatch to the right client and return {text, seconds}."""
     started = time.perf_counter()
 
@@ -54,18 +54,18 @@ def transcribe_one(kind: str, opts: dict, audio: Path, language: str, out_dir: P
         # the library never overwrites, so give each run its own work dir
         work = out_dir / f"_raw_{opts['model']}_{time.strftime('%Y%m%d-%H%M%S')}"
         transcribe_http(audio, opts["endpoint"], work,
-                        model=opts["model"], language=language, timeout=3600)
+                        model=opts["model"], language=language, timeout=3600, usage_log=usage_log)
         text = json.loads((work / "response.json").read_text())["text"]
 
     elif kind == "groq":
         from multimodal_transcription_core import GroqAPI, STTModel
-        result = GroqAPI(rate_limiter=limiter).speech_to_text(str(audio), model=STTModel(opts["model"]),
+        result = GroqAPI(rate_limiter=limiter, usage_log=usage_log).speech_to_text(str(audio), model=STTModel(opts["model"]),
                                           language=language, response_format="verbose_json")
         text = result["text"]
 
     elif kind == "gemini":
         from multimodal_transcription_core import GeminiAPI
-        result = GeminiAPI(rate_limiter=limiter).speech_to_text(str(audio), model=opts["model"], language=language)
+        result = GeminiAPI(rate_limiter=limiter, usage_log=usage_log).speech_to_text(str(audio), model=opts["model"], language=language)
         text = result["text"]
 
     else:
@@ -78,6 +78,8 @@ def main() -> int:
     cfg = load_config(Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "config.ini")
     load_secrets(cfg)
     limiter = build_limiter(cfg)
+    from multimodal_transcription_core import UsageLog
+    usage_log = UsageLog.from_parser(cfg)
 
     audio = Path(cfg["audio"]["path"]).expanduser()
     if not audio.is_file():
@@ -117,7 +119,7 @@ def main() -> int:
         }
         started = time.perf_counter()
         try:
-            r = transcribe_one(opts["kind"], opts, audio, language, run_dir, limiter=limiter)
+            r = transcribe_one(opts["kind"], opts, audio, language, run_dir, limiter=limiter, usage_log=usage_log)
         except Exception as exc:                  # noqa: BLE001 - record, keep going
             rec.update(status="failed", error_type=type(exc).__name__,
                        error=str(exc)[:2000], seconds=round(time.perf_counter() - started, 2))

@@ -148,16 +148,16 @@ class TestMergeApiViaBaseUrl:
 
 
 class TestChunkedModelIsPriced:
-    """Chunked path must use the configured model: gemini-3.5-flash."""
+    """Chunked path must use the supported replacement: gemini-3.6-flash."""
 
-    def test_merge_model_is_3_5_flash(self):
+    def test_merge_model_is_3_6_flash(self):
         chunked = _load_module("chunked_transcriber")
-        assert chunked.MERGE_MODEL == "gemini-3.5-flash"
+        assert chunked.MERGE_MODEL == "gemini-3.6-flash"
 
-    def test_transcribe_chunk_uses_3_5_flash(self, tmp_path):
+    def test_transcribe_chunk_uses_3_6_flash(self, tmp_path):
         chunked = _load_module("chunked_transcriber")
         mock_api = MagicMock()
         mock_api.speech_to_text.return_value = {"text": "x", "success": True}
         chunked._transcribe_chunk(str(tmp_path / "c.mp3"), mock_api)
         model = mock_api.speech_to_text.call_args.kwargs["model"]
-        assert model.value == "gemini-3.5-flash"
+        assert model.value == "gemini-3.6-flash"

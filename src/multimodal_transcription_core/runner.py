@@ -78,16 +78,17 @@ def is_reachable(name, options):
     return bool(variable and os.environ.get(variable))
 
 
-def transcribe_with_model(name, options, audio_path, language, limiter=None):
+def transcribe_with_model(name, options, audio_path, language, limiter=None, usage_log=None):
     """Dispatch to the client for this model's kind and return transcript text."""
     kind = options.get("kind")
     api_model = options.get("model", name)
+    usage_options = {"usage_log": usage_log} if usage_log is not None else {}
     if kind == "gemini":
         from .gemini_client import GeminiAPI
-        return GeminiAPI(rate_limiter=limiter).speech_to_text(str(audio_path), model=api_model, language=language)["text"]
+        return GeminiAPI(rate_limiter=limiter, **usage_options).speech_to_text(str(audio_path), model=api_model, language=language)["text"]
     if kind == "groq":
         from .groq_client import STTAPI, STTModel
-        result = STTAPI(rate_limiter=limiter).speech_to_text(str(audio_path), model=STTModel(api_model),
+        result = STTAPI(rate_limiter=limiter, **usage_options).speech_to_text(str(audio_path), model=STTModel(api_model),
                                          language=language, response_format="verbose_json")
         return result["text"]
     if kind == "http":
@@ -95,7 +96,7 @@ def transcribe_with_model(name, options, audio_path, language, limiter=None):
         work = Path(tempfile.mkdtemp(prefix="transcription-core-")) / "run"
         try:
             transcribe_http(Path(audio_path), options["endpoint"], work,
-                            model=api_model, language=language, timeout=3600)
+                            model=api_model, language=language, timeout=3600, **usage_options)
             return json.loads((work / "response.json").read_text(encoding="utf-8"))["text"]
         finally:
             shutil.rmtree(work.parent, ignore_errors=True)
@@ -150,6 +151,8 @@ def main(argv=None):
     load_secrets(config)
     from .rate_limiter import RateLimiter
     limiter = RateLimiter.from_parser(config)
+    from .usage import UsageLog
+    usage_log = UsageLog.from_parser(config)
 
     ranking = ranked_models(config)
     if not ranking:
@@ -181,7 +184,8 @@ def main(argv=None):
         options = model_options(config, chosen)
 
     language = args.language or config.get("defaults", "language", fallback=None)
-    text = transcribe_with_model(chosen, options, args.audio, language, limiter=limiter)
+    usage_options = {"usage_log": usage_log} if usage_log is not None else {}
+    text = transcribe_with_model(chosen, options, args.audio, language, limiter=limiter, **usage_options)
 
     if args.destination is None:
         print(text.strip())

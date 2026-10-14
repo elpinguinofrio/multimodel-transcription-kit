@@ -16,6 +16,7 @@ import importlib.util
 
 from .rate_limiter import estimate_audio_tokens, estimate_text_tokens
 from .request_policy import send_with_limits
+from .usage import track
 
 logger = logging.getLogger("stt_api_gemini")
 
@@ -35,6 +36,7 @@ class GeminiModel(Enum):
     GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite"
     GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
     GEMINI_3_5_FLASH = "gemini-3.5-flash"
+    GEMINI_3_6_FLASH = "gemini-3.6-flash"
     GEMINI_3_5_TRANSCRIBE = "gemini-3.5-transcribe"
     GEMINI_3_5_TRANSCRIBE_LIVE = "gemini-3.5-transcribe-live"
     GEMINI_3_8_LIVE = "gemini-3.8-live"
@@ -95,6 +97,7 @@ class GeminiAPI:
         retry_base_delay: float = 2.0,
         max_retry_delay: float = 60.0,
         rate_limiter=None,
+        usage_log=None,
     ) -> None:
         """
         Initialize the Gemini API client.
@@ -120,6 +123,7 @@ class GeminiAPI:
         self.retry_base_delay = retry_base_delay
         self.max_retry_delay = max_retry_delay
         self.rate_limiter = rate_limiter
+        self.usage_log = usage_log
         self._last_call = 0.0
         # Track request timestamps for rate limiting (sliding window)
         self._request_timestamps: deque = deque()
@@ -183,7 +187,7 @@ class GeminiAPI:
         self._request_timestamps.append(current_time)
 
     def _post_with_retry(self, url, payload, timeout, headers=None, limit_key=None, tokens=0,
-                         max_retries=None):
+                         max_retries=None, operation="transcription"):
         """POST with bounded retry on transient failures.
 
         Retries on 429 / 5xx (see RETRYABLE_STATUS) and on connection-level
@@ -199,6 +203,7 @@ class GeminiAPI:
             limiter=self.rate_limiter, key=limit_key or "gemini", tokens=tokens,
             max_retries=self.max_retries if max_retries is None else max_retries,
             base_delay=self.retry_base_delay, max_delay=self.max_retry_delay,
+            usage_log=self.usage_log, provider="gemini", operation=operation,
         )
 
     @staticmethod
@@ -389,7 +394,9 @@ class GeminiAPI:
         list_url = f"{self.base_url}/v1beta/models?key={self.api_key}"
 
         try:
-            res = requests.get(list_url, timeout=self.timeout)
+            with track(self.usage_log, "gemini", "*", "models") as event:
+                res = requests.get(list_url, timeout=self.timeout)
+                event["http_status"] = res.status_code
             if res.status_code != 200:
                 logger.warning("Failed to list models: %s", res.text)
                 return []
@@ -825,7 +832,7 @@ class GeminiAPI:
     def generate_text(
         self,
         prompt: str,
-        model: Union[GeminiModel, str] = "gemini-3.5-flash",
+        model: Union[GeminiModel, str] = "gemini-3.6-flash",
         temperature: float = 0.0,
         max_output_tokens: Optional[int] = None,
         timeout: Optional[int] = None,
@@ -856,7 +863,7 @@ class GeminiAPI:
         try:
             res = self._post_with_retry(request_url, payload, timeout=timeout or self.timeout,
                                         limit_key=model_name, tokens=estimate_text_tokens(prompt),
-                                        max_retries=retries)
+                                        max_retries=retries, operation="generation")
         except requests.exceptions.RequestException as exc:
             raise GeminiAPIError(f"request failed: {exc}") from exc
 

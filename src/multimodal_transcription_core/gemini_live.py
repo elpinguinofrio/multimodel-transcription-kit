@@ -17,6 +17,7 @@ import wave
 
 from .gemini_client import GeminiAPI, GeminiAPIError, GeminiModel, assert_model_allowed
 from .rate_limiter import estimate_audio_tokens
+from .usage import track
 
 
 LIVE_MODELS = {
@@ -112,12 +113,15 @@ def transcribe_live(audio_path, model, *, api=None):
             "realtimeInputConfig": {"automaticActivityDetection": {"disabled": True}},
         }
         try:
-            with connect(url, open_timeout=api.timeout, close_timeout=1) as ws:
-                ws.send(json.dumps({"setup": setup}))
-                message = _receive(ws, api.timeout)
-                if "setupComplete" not in message:
-                    raise GeminiAPIError("Live server did not acknowledge setup")
-                return _stream(ws, pcm, duration, model_name, api.timeout, started)
+            with track(api.usage_log, "gemini", model_name, "live") as event:
+                usage = {}
+                event["response"] = {"usageMetadata": usage}
+                with connect(url, open_timeout=api.timeout, close_timeout=1) as ws:
+                    ws.send(json.dumps({"setup": setup}))
+                    message = _receive(ws, api.timeout)
+                    if "setupComplete" not in message:
+                        raise GeminiAPIError("Live server did not acknowledge setup")
+                    return _stream(ws, pcm, duration, model_name, api.timeout, started, usage=usage)
         except GeminiAPIError:
             raise
         except Exception as exc:
@@ -138,7 +142,7 @@ def _receive(ws, timeout):
     return message
 
 
-def _stream(ws, pcm, duration, model, timeout, started):
+def _stream(ws, pcm, duration, model, timeout, started, usage=None):
     stop = threading.Event()
     end_started = threading.Event()
     ended = threading.Event()
@@ -167,7 +171,7 @@ def _stream(ws, pcm, duration, model, timeout, started):
     sender = threading.Thread(target=send_audio, name="gemini-live-audio", daemon=True)
     sender.start()
     texts = []
-    usage = {}
+    usage = {} if usage is None else usage
     turn_complete = False
     transcript_pending = False
     deadline = time.monotonic() + duration + timeout

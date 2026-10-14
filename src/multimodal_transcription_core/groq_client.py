@@ -42,12 +42,13 @@ class STTAPI:
 
     def __init__(self, throttle_rate: float = 0.5, timeout: int = 40, rate_limiter=None,
                  max_retries: int = 4, retry_base_delay: float = 2.0,
-                 max_retry_delay: float = 60.0) -> None:
+                 max_retry_delay: float = 60.0, usage_log=None) -> None:
         self.api_key: str = self._get_api_key()
         self.throttle_rate = throttle_rate
         self.timeout = timeout
         # Shared RateLimiter; when set it replaces the built-in throttle.
         self.rate_limiter = rate_limiter
+        self.usage_log = usage_log
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.max_retry_delay = max_retry_delay
@@ -217,6 +218,7 @@ class STTAPI:
                 ),
                 limiter=self.rate_limiter, key=model.value, max_retries=self.max_retries,
                 base_delay=self.retry_base_delay, max_delay=self.max_retry_delay,
+                usage_log=self.usage_log, provider="groq", operation="transcription",
             )
             if res.status_code != 200:
                 try:

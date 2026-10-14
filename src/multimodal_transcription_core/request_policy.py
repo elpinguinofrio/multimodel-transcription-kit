@@ -4,11 +4,13 @@ import logging
 import random
 import re
 import time
+import uuid
 from typing import Callable, Optional
 
 import requests
 
 from .rate_limiter import QuotaExhausted, RateLimiter, RateLimitTimeout, next_quota_reset
+from .usage import track
 
 logger = logging.getLogger("request_policy")
 
@@ -69,7 +71,8 @@ def backoff(attempt: int, base_delay: float, max_delay: float) -> float:
 
 def send_with_limits(send: Callable[[], requests.Response], *, limiter: Optional[RateLimiter],
                      key: str, tokens: int = 0, max_retries: int = 4, base_delay: float = 2.0,
-                     max_delay: float = 60.0, sleep=None) -> requests.Response:
+                     max_delay: float = 60.0, sleep=None, usage_log=None,
+                     provider="unknown", operation="transcription") -> requests.Response:
     """Send once per free slot; retry 429, 5xx and connection errors.
 
     Returns the final response (the caller raises on non-200). Raises
@@ -80,11 +83,22 @@ def send_with_limits(send: Callable[[], requests.Response], *, limiter: Optional
     sleep = sleep or time.sleep
     attempt = 0
     rate_limited = 0
+    request_id = uuid.uuid4().hex
+    sent_attempts = 0
     while True:
         if limiter is not None:
             limiter.acquire(key, tokens)
         try:
-            response = send()
+            sent_attempts += 1
+            with track(usage_log, provider, key, operation,
+                       request_id=request_id, attempt=sent_attempts) as event:
+                response = send()
+                event["http_status"] = response.status_code
+                if usage_log is not None:
+                    try:
+                        event["response"] = response.json()
+                    except (ValueError, TypeError):
+                        pass
         except requests.exceptions.RequestException as exc:
             if attempt >= max_retries:
                 raise

@@ -26,7 +26,7 @@ kind = gemini
 # rpd = 250                                  # optional: this machine's share, overrides the tier
 ```
 
-Public tier limits live in the package (`src/multimodal_transcription_core/tiers/gemini-pro-tier.ini`) and are the same for every account on that tier.
+The limits preset lives in the package (`src/multimodal_transcription_core/tiers/gemini-pro-tier.ini`). Its source is the owner's AI Studio project snapshot, not a public quota guarantee for every Google AI Pro subscriber. Check your project's active quotas before using it.
 Your config only names the tier and holds what is specific to one machine.
 `rpm`/`tpm`/`rpd` in a `[model.*]` section override the tier one field at a time. Values like `"250K"`, `"14.4K"` and `"Unlimited"` all parse.
 If Google changes the quotas, update the tier file and commit it.
@@ -79,13 +79,18 @@ The three errors above all inherit from `RateLimitError`.
 They are never wrapped in `RuntimeError`, and `transcribe_large` raises them instead of merging around a missing chunk.
 For Groq, pass the same limiter: `GroqAPI(rate_limiter=limiter)`.
 
+To keep request history and actual input/output token usage across all providers,
+set `[usage] file` in the CLI configuration or pass a shared `UsageLog` to each
+client. Fetch totals with `transcription-core usage --config <config>`.
+See [Simple request usage history](usage.md) for setup, filters and the Python API.
+
 ### Which model each function uses
 
 Always pass `model=` with a model that has limits in your config.
 
 - `transcribe(..., model=...)` uses the model you pass. Without one it uses `gemini-3-flash-preview` (20 per day on this key).
 - `transcribe_large(..., model=...)` uses that one model for everything: files under 30 minutes, each chunk of a longer file, and the merges between chunks.
-  Without `model` it keeps the old behaviour: `transcribe()`'s default for short files, and `gemini-3.5-flash` for chunks and merges. That model has no limits in the config, so it's only covered by 429 handling.
+  Without `model` it uses `transcribe()`'s default for short files, and `gemini-3.6-flash` for chunks and merges. `GeminiAPI.generate_text()` also defaults to 3.6 Flash. Its preset contains 5 RPM, 250K TPM and 20 RPD; load the preset and pass the limiter to enforce them. The old 3.5 Flash enum remains available for compatibility, but Google routes it to 3.6 Flash.
 
 ## 4. Host and VM together
 

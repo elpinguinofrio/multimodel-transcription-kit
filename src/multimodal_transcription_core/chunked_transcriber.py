@@ -65,7 +65,7 @@ def _standard_transcribe(audio_path: str, api: Optional[GeminiAPI] = None,
 
 
 def _transcribe_chunk(chunk_path: str, api: GeminiAPI,
-                      model: Union[GeminiModel, str] = GeminiModel.GEMINI_3_5_FLASH) -> Dict[str, Any]:
+                      model: Union[GeminiModel, str] = GeminiModel.GEMINI_3_6_FLASH) -> Dict[str, Any]:
     """
     Transcribe a single audio chunk.
 
@@ -86,7 +86,7 @@ def _transcribe_chunk(chunk_path: str, api: GeminiAPI,
 
 # Model for chunk transcription + merge. Must be served by the configured
 # Gemini endpoint configured by GEMINI_BASE_URL.
-MERGE_MODEL = "gemini-3.5-flash"
+MERGE_MODEL = "gemini-3.6-flash"
 
 
 class ChunkedMergeAPI:
@@ -132,7 +132,7 @@ def transcribe_large(audio_path: Union[str, Path], api: Optional[GeminiAPI] = No
         api: Configured GeminiAPI, e.g. with a shared RateLimiter; default builds one
         model: One Gemini model for every request (short file, chunks, merges), so a
             limiter configured for that model covers all of them. Default keeps the
-            previous models (transcribe() default; gemini-3.5-flash for chunks/merges).
+            transcribe() default for short files; gemini-3.6-flash for chunks/merges.
 
     Returns:
         TranscriptionResult dict with keys:
@@ -176,7 +176,7 @@ def transcribe_large(audio_path: Union[str, Path], api: Optional[GeminiAPI] = No
 
     # One client for every chunk and merge, so they share its rate limiting
     api = api if api is not None else GeminiAPI()
-    chunk_model = model or GeminiModel.GEMINI_3_5_FLASH.value
+    chunk_model = model or GeminiModel.GEMINI_3_6_FLASH.value
 
     # Transcribe each chunk
     transcripts: List[Dict[str, Any]] = []
