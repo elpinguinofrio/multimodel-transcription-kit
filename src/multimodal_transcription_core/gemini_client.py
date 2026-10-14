@@ -14,9 +14,11 @@ from typing import Any, Dict, Optional, Union
 import requests
 import importlib.util
 
+from .errors import ProviderError, ResponseError, with_status as _with_status
 from .rate_limiter import estimate_audio_tokens, estimate_text_tokens
 from .request_policy import send_with_limits
-from .usage import track
+from .transcription_types import is_no_speech
+from .usage import track, usage_fields
 
 logger = logging.getLogger("stt_api_gemini")
 
@@ -68,8 +70,22 @@ def assert_model_allowed(model_name: str) -> None:
         )
 
 
-class GeminiAPIError(Exception):
+class GeminiAPIError(ProviderError):
     """Raised when the Gemini API client encounters a fatal error."""
+
+
+class GeminiResponseError(GeminiAPIError, ResponseError):
+    """Gemini answered without a usable complete transcript (blocked, malformed, truncated)."""
+
+
+# Non-speech sound instructions for the plain and diarized prompts (sounds=True/False).
+SOUND_INSTRUCTIONS = {
+    True: "Write non-speech sounds in asterisks where they occur, e.g. *dog barking*, *laughter*. ",
+    False: "Output only the spoken words; do not describe non-speech sounds. ",
+}
+
+# A transcript is complete only when generation stopped normally. Some gateways omit the field.
+COMPLETE_FINISH_REASONS = {None, "STOP"}
 
 
 class GeminiAPI:
@@ -382,6 +398,49 @@ class GeminiAPI:
 
         return text
 
+    @staticmethod
+    def _transcript_from(response_data):
+        """(text, finishReason) of a complete transcript, or GeminiResponseError.
+
+        Blocked, empty-candidate, malformed and truncated responses raise with the
+        provider's diagnostic; a truncated transcript keeps its text as partial_text.
+        """
+        if not isinstance(response_data, dict):
+            raise GeminiResponseError("response body is not a JSON object")
+        candidates = response_data.get("candidates")
+        if not isinstance(candidates, list) or not candidates or not isinstance(candidates[0], dict):
+            feedback = response_data.get("promptFeedback")
+            block_reason = feedback.get("blockReason") if isinstance(feedback, dict) else None
+            if block_reason:
+                raise GeminiResponseError(f"PROMPT BLOCKED: {block_reason}", finish_reason=block_reason)
+            raise GeminiResponseError(f"No candidates returned, keys: {list(response_data)}")
+        candidate = candidates[0]
+        finish_reason = candidate.get("finishReason")
+        content = candidate.get("content")
+        parts = content.get("parts") if isinstance(content, dict) else None
+        texts = []
+        for part in parts if isinstance(parts, list) else []:
+            if not isinstance(part, dict) or part.get("thought"):
+                continue
+            value = part.get("text")
+            if value is None and isinstance(part.get("audioTranscription"), dict):
+                value = part["audioTranscription"].get("text")
+            if isinstance(value, str):
+                texts.append(value)
+        text = "".join(texts) if texts else None
+        if finish_reason not in COMPLETE_FINISH_REASONS or text is None:
+            details = f"finishReason={finish_reason or 'UNKNOWN'}"
+            blocked = [r.get("category") for r in candidate.get("safetyRatings") or []
+                       if isinstance(r, dict) and r.get("blocked")]
+            if blocked:
+                details += f", BLOCKED by: {blocked}"
+            if text is None:
+                details += ", NO CONTENT returned" if not content else ", no transcript parts"
+            logger.error("Unusable Gemini response: %s", details)
+            raise GeminiResponseError(f"Gemini returned no complete transcript ({details})",
+                                      finish_reason=finish_reason, partial_text=text)
+        return text, finish_reason
+
     # ───────────────────────── public api ───────────────────────
 
     def list_available_models(self) -> list:
@@ -444,6 +503,7 @@ class GeminiAPI:
         diarize: bool = False,
         analyze: bool = False,
         output_format: str = "default",
+        sounds: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Transcribe audio to text using Gemini API.
@@ -460,6 +520,8 @@ class GeminiAPI:
             diarize: If True, identify and label different speakers
             analyze: If True, extract full audio metadata (emotions, gender, etc.)
             output_format: Transcription style ('default', 'court', 'screenplay')
+            sounds: True writes non-speech sounds as *dog barking*; False asks for
+                spoken words only; None keeps the original prompt wording.
 
         Returns:
             Dictionary containing transcription and metadata
@@ -621,6 +683,7 @@ class GeminiAPI:
                 f"Identify different speakers and label them as 'Speaker 1:', 'Speaker 2:', etc. "
                 f"Format each speaker's turn on a new line with their label. "
                 f"Do not include timestamps or time markers. "
+                f"{SOUND_INSTRUCTIONS.get(sounds, '')}"
                 f"If the audio is silent, empty, or unclear, output exactly '[SILENCE]'. "
                 f"Do NOT ask for the audio file. Do NOT converse. "
                 f"{prompt or ''}"
@@ -629,7 +692,7 @@ class GeminiAPI:
             prompt_text = (
                 f"Transcribe the following audio to plain text. "
                 f"Do not include timestamps or time markers. "
-                f"Output only the spoken words. "
+                f"{SOUND_INSTRUCTIONS.get(sounds, 'Output only the spoken words. ')}"
                 f"If the audio is silent, empty, or unclear, output exactly '[SILENCE]'. "
                 f"Do NOT ask for the audio file. Do NOT converse. "
                 f"{prompt or ''}"
@@ -707,98 +770,32 @@ class GeminiAPI:
                 except Exception:
                     detail = res.text
                 logger.error("API error %d: %s", res.status_code, detail)
-                raise GeminiAPIError(f"API error {res.status_code}: {detail}")
+                raise _with_status(GeminiAPIError(f"API error {res.status_code}: {detail}"), res.status_code)
 
             processing_time = time.time() - started
             logger.info("API response received in %.2f seconds", processing_time)
 
-            response_data = res.json()
-
-            # Extract text from the response
             try:
-                parts = response_data["candidates"][0]["content"]["parts"]
-                texts = [
-                    part.get("text", part.get("audioTranscription", {}).get("text"))
-                    for part in parts if not part.get("thought")
-                ]
-                texts = [value for value in texts if isinstance(value, str)]
-                if not texts:
-                    raise KeyError("text or audioTranscription.text")
-                text = "".join(texts)
-            except (KeyError, IndexError) as e:
-                # Log detailed response structure for debugging
-                import json
-                logger.error("Failed to extract text from response: %s", e)
+                response_data = res.json()
+            except ValueError as exc:
+                raise GeminiResponseError(f"200 but body was not valid JSON: {exc}") from exc
+            text, finish_reason = self._transcript_from(response_data)
 
-                # Extract what we can from the response for detailed error
-                candidates = response_data.get("candidates", [])
-                if candidates:
-                    candidate = candidates[0]
-                    finish_reason = candidate.get("finishReason", "UNKNOWN")
-                    safety_ratings = candidate.get("safetyRatings", [])
-                    content = candidate.get("content", {})
-
-                    # Build detailed error message
-                    error_details = f"finishReason={finish_reason}"
-                    if safety_ratings:
-                        blocked = [r for r in safety_ratings if r.get("blocked")]
-                        if blocked:
-                            error_details += f", BLOCKED by: {[r.get('category') for r in blocked]}"
-                    if not content:
-                        error_details += ", NO CONTENT returned"
-                    elif not content.get("parts"):
-                        error_details += f", content has no parts: {list(content.keys())}"
-
-                    logger.error("Response details: %s", error_details)
-                    logger.debug("Full candidate: %s", json.dumps(candidate, indent=2)[:1000])
-                    text = f"[PARSE_ERROR] {error_details}"
-                else:
-                    # No candidates at all
-                    prompt_feedback = response_data.get("promptFeedback", {})
-                    block_reason = prompt_feedback.get("blockReason", "")
-                    if block_reason:
-                        error_details = f"PROMPT BLOCKED: {block_reason}"
-                    else:
-                        error_details = f"No candidates returned, keys: {list(response_data.keys())}"
-                    logger.error("Response details: %s", error_details)
-                    logger.debug("Full response: %s", json.dumps(response_data, indent=2)[:1000])
-                    text = f"[PARSE_ERROR] {error_details}"
-
-            # Clean hallucinations/repetition loops
+            # A transcript that is only a repetition loop is a failure, not text.
             text = self._clean_hallucinations(text)
+            if text == "[HALLUCINATION]":
+                raise GeminiResponseError("response was only a repetition loop", finish_reason=finish_reason)
 
             # Strip conversational artifacts (LLM sometimes adds these)
             text = self._strip_conversational_prefix(text)
 
-            # Extract usage metadata for stats
-            usage_metadata = response_data.get("usageMetadata", {})
-            input_tokens = usage_metadata.get("promptTokenCount", 0)
-            output_tokens = usage_metadata.get("candidatesTokenCount", 0)
-            output_bytes = len(text.encode('utf-8'))
+            # Provider-reported usage only; missing counts stay None (unknown).
+            usage = usage_fields(response_data)
+            input_tokens = usage["input_tokens"]
+            output_tokens = usage["output_tokens"]
+            logger.info("input: %.0fs/%s tokens, output %.1fkb/%s tokens", duration_sec,
+                        input_tokens, len(text.encode("utf-8")) / 1024, output_tokens)
 
-            # Format duration as minutes:seconds (e.g., 1465 seconds = 24m25s)
-            minutes = int(duration_sec // 60)
-            seconds = int(duration_sec % 60)
-            duration_str = f"{minutes}m{seconds}s"
-
-            # Format tokens with "k" suffix if >= 1000 (e.g., 15200 = 15.2k)
-            def format_tokens(tokens):
-                if tokens >= 1000:
-                    return f"{tokens / 1000:.1f}k"
-                return str(tokens)
-
-            input_tokens_str = format_tokens(input_tokens)
-            output_tokens_str = format_tokens(output_tokens)
-
-            # Format bytes to kb with one decimal place (e.g., 3700 bytes = 3.7kb)
-            output_kb = output_bytes / 1024
-            output_bytes_str = f"{output_kb:.1f}kb"
-
-            # Log stats in requested format
-            logger.info("input: %s/%s tokens, output %s/%s tokens",
-                       duration_str, input_tokens_str, output_bytes_str, output_tokens_str)
-
-            # Build result dictionary (return token stats for caller logging)
             result = {
                 "text": text,
                 "duration": duration_sec,
@@ -806,7 +803,12 @@ class GeminiAPI:
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "model": model_name,
+                "provider": "gemini",
                 "success": True,
+                "no_speech": is_no_speech(text),
+                # The exact request, so a run can be reproduced from its receipt.
+                "request": {"model": model_name, "prompt": prompt_text, "mime_type": mime_type,
+                            "generationConfig": payload["generationConfig"]},
             }
 
             if response_format == "json":
@@ -872,14 +874,15 @@ class GeminiAPI:
                 detail = res.json()
             except Exception:
                 detail = res.text
-            raise GeminiAPIError(f"API error {res.status_code}: {detail}")
+            raise _with_status(GeminiAPIError(f"API error {res.status_code}: {detail}"), res.status_code)
 
         try:
             data = res.json()
         except ValueError as exc:
             raise GeminiAPIError(f"200 but body was not valid JSON: {exc}") from exc
         try:
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            reason = data["candidates"][0].get("finishReason")
         except (KeyError, IndexError, AttributeError, TypeError) as exc:
             d = data if isinstance(data, dict) else {}
             cands = d.get("candidates") or []
@@ -891,3 +894,8 @@ class GeminiAPI:
                 f"no usable text (finishReason={reason}"
                 f"{', blockReason=' + block if block else ''})"
             ) from exc
+        if reason not in COMPLETE_FINISH_REASONS:
+            # A truncated or blocked generation is not usable text (a merge or fusion would lose speech).
+            raise GeminiResponseError(f"generation stopped early (finishReason={reason})",
+                                      finish_reason=reason, partial_text=text)
+        return text

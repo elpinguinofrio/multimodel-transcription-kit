@@ -226,300 +226,121 @@ class TestChunkMerger:
 # =============================================================================
 
 class TestChunkedTranscriber:
-    """Tests for chunked_transcriber.py - main entry point."""
+    """transcribe_large runs the shared engine; these patch its seams (duration,
+    splitting, the per-part provider request and reconstruction)."""
 
-    def test_small_file_uses_standard_transcription(self, tmp_path):
-        """Files under 30 min should use standard transcription."""
+    @staticmethod
+    def run(tmp_path, duration, results, reconstructed=None, chunks=2):
+        import pytest
+        engine = _load_module("engine")
         transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "short.m4a"
-        audio_file.touch()
-
-        mock_standard = MagicMock(return_value={
-            "text": "Short audio transcription",
-            "duration": 600.0,
-            "success": True
-        })
-
-        with patch.object(transcriber, "get_duration", return_value=600.0):  # 10 min
-            with patch.object(transcriber, "_standard_transcribe", mock_standard):
-                result = transcriber.transcribe_large(str(audio_file))
-
-        mock_standard.assert_called_once()
-        assert result["text"] == "Short audio transcription"
-
-    def test_large_file_splits_and_merges(self, tmp_path):
-        """Files over 30 min should be split, transcribed, and merged."""
-        transcriber = _load_module("chunked_transcriber")
-
         audio_file = tmp_path / "long.m4a"
         audio_file.touch()
+        made = []
 
-        mock_chunks = [
-            MagicMock(path="/tmp/chunk_0.m4a", start_time=0, end_time=1800),
-            MagicMock(path="/tmp/chunk_1.m4a", start_time=1790, end_time=3600),
-        ]
+        def split(path, chunk_sec, overlap_sec, output_dir):
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            out = []
+            for i in range(chunks):
+                chunk = Path(output_dir) / f"chunk_{i}.m4a"
+                chunk.touch()
+                made.append(chunk)
+                out.append(MagicMock(path=str(chunk), start_time=i * 1800.0, end_time=(i + 1) * 1800.0 + 10))
+            return out
 
-        with patch.object(transcriber, "get_duration", return_value=3600.0):  # 1 hour
-            with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                with patch.object(transcriber, "_transcribe_chunk") as mock_transcribe:
-                    mock_transcribe.side_effect = [
-                        {"text": "Chunk 1 text", "success": True},
-                        {"text": "Chunk 2 text", "success": True},
-                    ]
-                    with patch.object(transcriber, "merge_all_chunks", return_value="Merged text"):
-                        result = transcriber.transcribe_large(str(audio_file))
+        request = MagicMock(side_effect=results)
+        merge = MagicMock(return_value=reconstructed or {"text": "Merged text", "segments": None,
+                                                         "warnings": [], "boundaries": []})
+        with patch.object(engine, "get_duration", return_value=duration), \
+                patch.object(engine, "split_audio", side_effect=split) as splitter, \
+                patch.object(engine, "_request", request), \
+                patch.object(engine, "reconstruct", merge):
+            try:
+                result = transcriber.transcribe_large(str(audio_file))
+                error = None
+            except Exception as exc:  # returned for assertions below
+                result, error = None, exc
+        return dict(result=result, error=error, request=request, merge=merge, split=splitter, made=made)
 
-        assert mock_transcribe.call_count == 2
-        assert result["text"] == "Merged text"
-        assert result["chunks"] == 2
+    def test_small_file_uses_standard_transcription(self, tmp_path):
+        """Files under 30 min go out as one request, unsplit."""
+        run = self.run(tmp_path, 600.0, [{"text": "Short audio transcription", "success": True}])
+        assert run["request"].call_count == 1
+        run["split"].assert_not_called()
+        assert run["result"]["text"] == "Short audio transcription"
+
+    def test_large_file_splits_and_merges(self, tmp_path):
+        """Files over 30 min are split, transcribed, and merged."""
+        run = self.run(tmp_path, 3600.0, [{"text": "Chunk 1 text"}, {"text": "Chunk 2 text"}])
+        assert run["request"].call_count == 2
+        assert run["result"]["text"] == "Merged text"
+        assert run["result"]["chunks"] == 2
 
     def test_returns_compatible_interface(self, tmp_path):
         """Return value must be compatible with TranscriptionResult dict."""
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "test.m4a"
-        audio_file.touch()
-
-        with patch.object(transcriber, "get_duration", return_value=600.0):
-            with patch.object(transcriber, "_standard_transcribe", return_value={
-                "text": "Test",
-                "duration": 600.0,
-                "processing_time": 30.0,
-                "input_tokens": 1000,
-                "output_tokens": 100,
-                "model": "gemini-3-flash-preview",
-                "success": True
-            }):
-                result = transcriber.transcribe_large(str(audio_file))
-
-        # Must have all required fields
-        assert "text" in result
-        assert "duration" in result
-        assert "success" in result
+        run = self.run(tmp_path, 600.0, [{"text": "Test", "duration": 600.0, "processing_time": 30.0,
+                                          "input_tokens": 1000, "output_tokens": 100,
+                                          "model": "gemini-3-flash-preview", "success": True}])
+        result = run["result"]
+        for key in ("text", "duration", "success", "no_speech", "input_tokens", "output_tokens"):
+            assert key in result
         assert isinstance(result["success"], bool)
 
     def test_cleans_up_temp_files(self, tmp_path):
-        """Temporary chunk files should be deleted after transcription."""
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "long.m4a"
-        audio_file.touch()
-
-        # Create actual temp files
-        temp_dir = tmp_path / "chunks"
-        temp_dir.mkdir()
-        chunk_files = [
-            temp_dir / "chunk_0.m4a",
-            temp_dir / "chunk_1.m4a",
-        ]
-        for f in chunk_files:
-            f.touch()
-
-        mock_chunks = [
-            MagicMock(path=str(chunk_files[0]), start_time=0, end_time=1800),
-            MagicMock(path=str(chunk_files[1]), start_time=1790, end_time=3600),
-        ]
-
-        with patch.object(transcriber, "get_duration", return_value=3600.0):
-            with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                with patch.object(transcriber, "_transcribe_chunk", return_value={"text": "Test", "success": True}):
-                    with patch.object(transcriber, "merge_all_chunks", return_value="Merged"):
-                        transcriber.transcribe_large(str(audio_file))
-
-        # Temp files should be cleaned up
-        for f in chunk_files:
-            assert not f.exists(), f"Temp file {f} should have been deleted"
+        """Chunk files the engine created are deleted after transcription."""
+        run = self.run(tmp_path, 3600.0, [{"text": "Test"}, {"text": "Test"}])
+        assert run["made"] and not any(f.exists() for f in run["made"])
 
     def test_parse_error_chunk_does_not_kill_other_chunks(self, tmp_path):
-        """A chunk returning [PARSE_ERROR] (e.g. Gemini PROHIBITED_CONTENT) must be
-        converted to [TRANSCRIPTION FAILED] before reaching the merger, so adjacent
-        chunks survive and pipeline-level validation does not discard the whole file."""
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "long.m4a"
-        audio_file.touch()
-
-        mock_chunks = [
-            MagicMock(path="/tmp/chunk_0.m4a", start_time=0, end_time=1800),
-            MagicMock(path="/tmp/chunk_1.m4a", start_time=1790, end_time=3600),
-        ]
-
-        with patch.object(transcriber, "get_duration", return_value=3600.0):
-            with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                with patch.object(transcriber, "_transcribe_chunk") as mock_transcribe:
-                    mock_transcribe.side_effect = [
-                        {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT, NO CONTENT returned"},
-                        {"text": "Good chunk 2 content", "success": True},
-                    ]
-                    with patch.object(transcriber, "merge_all_chunks") as mock_merge:
-                        mock_merge.return_value = "Merged result"
-                        transcriber.transcribe_large(str(audio_file))
-
-        transcripts_passed = mock_merge.call_args[0][0]
-        assert len(transcripts_passed) == 2
-
-        chunk1_text = transcripts_passed[0]["text"]
-        assert "[PARSE_ERROR]" not in chunk1_text, (
-            "Parse-error chunk text must be sanitized before reaching merger; "
-            "otherwise pipeline-level validation discards the entire transcription."
-        )
-        assert "[TRANSCRIPTION FAILED]" in chunk1_text, (
-            "Parse-error chunk should be converted to [TRANSCRIPTION FAILED] so the "
-            "merger marks it as a failed segment instead of LLM-merging it as text."
-        )
-
-        assert transcripts_passed[1]["text"] == "Good chunk 2 content", (
-            "Successful chunks must pass through unchanged."
-        )
+        """A failed part does not stop the others: they are transcribed and merged, and the
+        partial result travels on IncompleteTranscriptError instead of as a success."""
+        from multimodal_transcription_core import IncompleteTranscriptError
+        run = self.run(tmp_path, 3600.0, [
+            {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT, NO CONTENT returned"},
+            {"text": "Good chunk 2 content", "success": True}])
+        assert isinstance(run["error"], IncompleteTranscriptError)
+        parts = run["merge"].call_args[0][0]
+        assert parts[0].failed and not parts[1].failed
+        assert parts[1].text == "Good chunk 2 content"
+        assert run["error"].result["text"] == "Merged text" and run["error"].failed_parts == [1]
 
     def test_all_chunks_parse_error_raises(self, tmp_path):
-        """If every chunk returns [PARSE_ERROR], transcribe_large must raise so the
-        pipeline writes an error sidecar. Otherwise we'd produce a 'successful'
-        transcript whose body is only failure markers."""
-        import pytest
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "long.m4a"
-        audio_file.touch()
-
-        mock_chunks = [
-            MagicMock(path="/tmp/chunk_0.m4a", start_time=0, end_time=1800),
-            MagicMock(path="/tmp/chunk_1.m4a", start_time=1790, end_time=3600),
-        ]
-
-        with patch.object(transcriber, "get_duration", return_value=3600.0):
-            with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                with patch.object(transcriber, "_transcribe_chunk") as mock_transcribe:
-                    mock_transcribe.side_effect = [
-                        {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT, NO CONTENT returned"},
-                        {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT, NO CONTENT returned"},
-                    ]
-                    with patch.object(transcriber, "merge_all_chunks") as mock_merge:
-                        with pytest.raises(Exception) as exc_info:
-                            transcriber.transcribe_large(str(audio_file))
-                        mock_merge.assert_not_called()
-
-        # Error message should preserve the underlying reason so the sidecar is informative
-        assert "PARSE_ERROR" in str(exc_info.value) or "PROHIBITED" in str(exc_info.value), (
-            "Raised error should carry the underlying parse-error detail for the sidecar."
-        )
+        """Every part failing raises with the underlying reason, before any merge."""
+        bad = {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT, NO CONTENT returned"}
+        run = self.run(tmp_path, 3600.0, [bad, bad])
+        assert run["error"] is not None
+        run["merge"].assert_not_called()
+        assert "PARSE_ERROR" in str(run["error"]) or "PROHIBITED" in str(run["error"])
 
     def test_all_chunks_exception_failure_reraises_original(self, tmp_path):
-        """If every chunk raises (network/api/auth errors), transcribe_large must
-        re-raise the original exception so pipeline.run()'s error_type heuristics
-        (auth/timeout/conversion/etc.) still classify chunked failures correctly."""
-        import pytest
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "long.m4a"
-        audio_file.touch()
-
-        mock_chunks = [
-            MagicMock(path="/tmp/chunk_0.m4a", start_time=0, end_time=1800),
-            MagicMock(path="/tmp/chunk_1.m4a", start_time=1790, end_time=3600),
-        ]
-
-        with patch.object(transcriber, "get_duration", return_value=3600.0):
-            with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                with patch.object(transcriber, "_transcribe_chunk") as mock_transcribe:
-                    mock_transcribe.side_effect = [
-                        Exception("API error 401: invalid api_key"),
-                        Exception("API error 401: invalid api_key"),
-                    ]
-                    with patch.object(transcriber, "merge_all_chunks") as mock_merge:
-                        with pytest.raises(Exception) as exc_info:
-                            transcriber.transcribe_large(str(audio_file))
-                        mock_merge.assert_not_called()
-
-        # The original exception text must survive so pipeline classification works
-        assert "401" in str(exc_info.value), (
-            "Original chunk exception must propagate so pipeline can classify auth errors."
-        )
-        assert "api_key" in str(exc_info.value), (
-            "Original chunk exception must propagate so pipeline can classify auth errors."
-        )
+        """If every part raises, the original exception propagates for classification."""
+        run = self.run(tmp_path, 3600.0, [Exception("API error 401: invalid api_key"),
+                                          Exception("API error 401: invalid api_key")])
+        run["merge"].assert_not_called()
+        assert "401" in str(run["error"]) and "api_key" in str(run["error"])
 
     def test_silence_plus_failure_raises(self, tmp_path):
-        """When the only non-failed chunks are [SILENCE], the file has no speech.
-        transcribe_large should raise so the pipeline writes an error sidecar
-        instead of producing markdown containing only [Part N - SILENCE/FAILED] markers."""
-        import pytest
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "long.m4a"
-        audio_file.touch()
-
-        mock_chunks = [
-            MagicMock(path="/tmp/chunk_0.m4a", start_time=0, end_time=1800),
-            MagicMock(path="/tmp/chunk_1.m4a", start_time=1790, end_time=3600),
-        ]
-
-        with patch.object(transcriber, "get_duration", return_value=3600.0):
-            with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                with patch.object(transcriber, "_transcribe_chunk") as mock_transcribe:
-                    mock_transcribe.side_effect = [
-                        {"text": "[SILENCE]"},
-                        {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT"},
-                    ]
-                    with patch.object(transcriber, "merge_all_chunks") as mock_merge:
-                        with pytest.raises(Exception):
-                            transcriber.transcribe_large(str(audio_file))
-                        mock_merge.assert_not_called()
+        """Silence beside a failure is not a transcript: raise, never markers-only output."""
+        run = self.run(tmp_path, 3600.0, [{"text": "[SILENCE]"},
+                                          {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT"}])
+        assert run["error"] is not None and "PROHIBITED" in str(run["error"])
+        run["merge"].assert_not_called()
 
     def test_empty_chunk_plus_failure_raises(self, tmp_path):
-        """An empty/whitespace chunk is not speech (merger treats it as silence).
-        Combined with a failed chunk, this must raise — otherwise the pipeline emits
-        markdown containing only marker text."""
-        import pytest
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "long.m4a"
-        audio_file.touch()
-
-        mock_chunks = [
-            MagicMock(path="/tmp/chunk_0.m4a", start_time=0, end_time=1800),
-            MagicMock(path="/tmp/chunk_1.m4a", start_time=1790, end_time=3600),
-        ]
-
+        """An empty/whitespace part is silence; with a failed part this must raise."""
         for empty_text in ("", "   ", "\n\n"):
-            with patch.object(transcriber, "get_duration", return_value=3600.0):
-                with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                    with patch.object(transcriber, "_transcribe_chunk") as mock_transcribe:
-                        mock_transcribe.side_effect = [
-                            {"text": empty_text},
-                            {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT"},
-                        ]
-                        with patch.object(transcriber, "merge_all_chunks") as mock_merge:
-                            with pytest.raises(Exception):
-                                transcriber.transcribe_large(str(audio_file))
-                            mock_merge.assert_not_called(), f"empty_text={empty_text!r} should raise"
+            run = self.run(tmp_path, 3600.0, [{"text": empty_text},
+                                              {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT"}])
+            assert run["error"] is not None and "PROHIBITED" in str(run["error"]), repr(empty_text)
+            run["merge"].assert_not_called()
 
     def test_all_silence_is_valid_output(self, tmp_path):
-        """All-silence is a valid output (a wholly quiet recording), not an error.
-        transcribe_large must NOT raise — let it merge and return normally."""
-        transcriber = _load_module("chunked_transcriber")
-
-        audio_file = tmp_path / "long.m4a"
-        audio_file.touch()
-
-        mock_chunks = [
-            MagicMock(path="/tmp/chunk_0.m4a", start_time=0, end_time=1800),
-            MagicMock(path="/tmp/chunk_1.m4a", start_time=1790, end_time=3600),
-        ]
-
-        with patch.object(transcriber, "get_duration", return_value=3600.0):
-            with patch.object(transcriber, "split_audio", return_value=mock_chunks):
-                with patch.object(transcriber, "_transcribe_chunk") as mock_transcribe:
-                    mock_transcribe.side_effect = [
-                        {"text": "[SILENCE]"},
-                        {"text": "[SILENCE]"},
-                    ]
-                    with patch.object(transcriber, "merge_all_chunks", return_value="silent") as mock_merge:
-                        result = transcriber.transcribe_large(str(audio_file))
-
-        mock_merge.assert_called_once()
-        assert result["text"] == "silent"
+        """All-silence is a valid, explicit no-speech result, not an error."""
+        run = self.run(tmp_path, 3600.0, [{"text": "[SILENCE]"}, {"text": "[SILENCE]"}],
+                       reconstructed={"text": "", "segments": None, "warnings": [], "boundaries": []})
+        assert run["error"] is None
+        assert run["result"]["no_speech"] is True and run["result"]["success"] is True
+        assert run["result"]["text"] == "[SILENCE]"
 
 
 # =============================================================================

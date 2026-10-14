@@ -1,0 +1,119 @@
+"""Loudness and noise assessment, and enhancement into a separate file (ffmpeg only).
+
+assess() reads the audio once and changes nothing. Speech and noise levels are
+the 95th and 10th percentiles of 50 ms window RMS (digital silence counts as
+very low); their difference estimates the signal-to-noise ratio. On synthetic
+speech-like bursts this estimate ran about 5 dB above the true SNR.
+
+enhance() writes `<stem>.enhanced-<id>.flac` beside the source: high-pass and
+FFT denoise when noisy, then EBU R128 loudness normalisation. The id hashes the
+source and the filter chain, so the same input reuses the same file; the
+original is never modified.
+"""
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import uuid
+from pathlib import Path
+
+from .errors import AudioPreparationError
+
+QUIET_LUFS = -35.0          # integrated loudness below this: too quiet
+LOUD_LUFS = -12.0           # above this: too loud
+MAX_TRUE_PEAK_DBTP = -1.0   # above this: clipping risk
+NOISY_SNR_DB = 15.0         # estimated SNR below this: noisy (about 10 dB true SNR)
+MIN_WINDOWS = 20            # under 1 s of audio the noise estimate is not attempted
+SILENCE_DB = -120.0
+TARGET = "loudnorm=I=-16:TP=-1.5:LRA=11"
+DENOISE_STRENGTH_DB = 12
+_ANALYSIS = ("aresample=16000,aformat=channel_layouts=mono,asetnsamples=n=800,"
+             "astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=RMS_level,"
+             "ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=-,loudnorm=print_format=json")
+
+
+def _ffmpeg(args):
+    try:
+        return subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", *args], capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise AudioPreparationError("ffmpeg is required to assess loudness") from exc
+
+
+def assess(path):
+    """Measure loudness and noise without modifying anything; list detected problems."""
+    run = _ffmpeg(["-i", str(path), "-vn", "-af", _ANALYSIS, "-f", "null", "-"])
+    if run.returncode or "{" not in run.stderr:
+        raise AudioPreparationError(f"ffmpeg could not read {Path(path).name} for assessment")
+    stats = json.loads(run.stderr[run.stderr.rindex("{"):run.stderr.rindex("}") + 1])
+    levels = sorted(SILENCE_DB if value == "-inf" else max(SILENCE_DB, float(value))
+                    for value in re.findall(r"RMS_level=(\S+)", run.stdout))
+
+    def number(key):
+        try:
+            return float(stats[key])
+        except (KeyError, ValueError):
+            return None
+    integrated, peak = number("input_i"), number("input_tp")
+    speech = levels[int(0.95 * (len(levels) - 1))] if levels else None
+    noise = levels[int(0.10 * (len(levels) - 1))] if levels else None
+    snr = speech - noise if levels and len(levels) >= MIN_WINDOWS else None
+    problems = []
+    if integrated is not None and integrated < QUIET_LUFS:
+        problems.append("quiet")
+    if (integrated is not None and integrated > LOUD_LUFS) or (peak is not None and peak > MAX_TRUE_PEAK_DBTP):
+        problems.append("loud")
+    if snr is not None and snr < NOISY_SNR_DB:
+        problems.append("noisy")
+    return {"integrated_lufs": integrated, "true_peak_dbtp": peak, "speech_level_db": speech,
+            "noise_level_db": noise, "snr_db": None if snr is None else round(snr, 1),
+            "problems": problems,
+            "thresholds": {"quiet_lufs": QUIET_LUFS, "loud_lufs": LOUD_LUFS,
+                           "max_true_peak_dbtp": MAX_TRUE_PEAK_DBTP, "noisy_snr_db": NOISY_SNR_DB}}
+
+
+def filters_for(assessment):
+    """ffmpeg filters that address the assessment's problems (empty when there are none)."""
+    if not assessment["problems"]:
+        return []
+    chain = []
+    if "noisy" in assessment["problems"]:
+        floor = max(-80, min(-20, round(assessment["noise_level_db"])))
+        chain += ["highpass=f=80", f"afftdn=nr={DENOISE_STRENGTH_DB}:nf={floor}"]
+    return chain + [TARGET]
+
+
+def _render(source, target, chain):
+    partial = target.with_name(f".{target.name}.{uuid.uuid4().hex}.partial")
+    run = _ffmpeg(["-v", "error", "-i", str(source), "-vn", "-af", ",".join(chain),
+                   "-ar", "16000", "-ac", "1", "-c:a", "flac", "-f", "flac", str(partial)])
+    if run.returncode:
+        partial.unlink(missing_ok=True)
+        raise AudioPreparationError(f"ffmpeg enhancement failed: {run.stderr.strip()[-300:]}")
+    if target.exists():                      # another run made the identical file first
+        partial.unlink()
+    else:
+        os.replace(partial, target)
+
+
+def enhance(source, assessment, *, force=False):
+    """Write the enhanced copy beside ``source`` (or reuse it); return its record.
+
+    force=True normalises loudness even when no problem was found.
+    """
+    source = Path(source)
+    chain = filters_for(assessment) or ([TARGET] if force else [])
+    if not chain:
+        return None
+    digest = hashlib.sha256()
+    with open(source, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    digest.update(("|".join(chain) + "|16000|mono|flac").encode())
+    target = source.with_name(f"{source.stem}.enhanced-{digest.hexdigest()[:12]}.flac")
+    reused = target.exists()
+    if not reused:
+        _render(source, target, chain)
+    return {"path": target, "filters": chain, "reused": reused,
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}

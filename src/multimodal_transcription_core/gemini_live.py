@@ -17,7 +17,8 @@ import wave
 
 from .gemini_client import GeminiAPI, GeminiAPIError, GeminiModel, assert_model_allowed
 from .rate_limiter import estimate_audio_tokens
-from .usage import track
+from .transcription_types import is_no_speech
+from .usage import track, usage_fields
 
 
 LIVE_MODELS = {
@@ -215,8 +216,9 @@ def _stream(ws, pcm, duration, model, timeout, started, usage=None):
         return {
             "text": "".join(texts).strip(), "model": model, "duration": duration,
             "processing_time": time.monotonic() - started,
-            "input_tokens": usage.get("promptTokenCount", 0),
-            "output_tokens": usage.get("responseTokenCount", 0), "success": True,
+            "input_tokens": usage_fields({"usageMetadata": usage})["input_tokens"],
+            "output_tokens": usage_fields({"usageMetadata": usage})["output_tokens"],
+            "provider": "gemini", "success": True, "no_speech": is_no_speech("".join(texts)),
         }
     finally:
         stop.set()

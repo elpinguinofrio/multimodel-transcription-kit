@@ -53,10 +53,10 @@ def stub_provider(monkeypatch):
     """Record which model was asked for; return a fixed transcript."""
     calls = []
 
-    def fake_transcribe(model_name, options, audio_path, language, limiter=None):
+    def fake_transcribe(model_name, options, audio_path, language, limiter=None, **kwargs):
         calls.append({"model": model_name, "audio": audio_path, "language": language,
-                      "limiter": limiter})
-        return "стенограмма"
+                      "limiter": limiter, **kwargs})
+        return {"text": "стенограмма", "warnings": []}
 
     monkeypatch.setattr(runner, "transcribe_with_model", fake_transcribe)
     return calls
@@ -218,3 +218,69 @@ def test_committed_example_config_parses(capsys):
     example = Path(__file__).resolve().parents[1] / "transcription.example.ini"
     limiter = RateLimiter.from_parser(runner.load_config(str(example)), state_path=None)
     assert limiter.limits["gemini-3.5-flash-lite"].rpd == 500
+
+
+def _capture_options(monkeypatch):
+    seen = []
+
+    def fake_transcribe(model_name, options, audio_path, language, limiter=None, config=None, **kwargs):
+        seen.append({"prompt": runner.model_spec(config, model_name, options).prompt})
+        return {"text": "стенограмма", "warnings": []}
+
+    monkeypatch.setattr(runner, "transcribe_with_model", fake_transcribe)
+    return seen
+
+
+def test_defaults_prompt_reaches_the_chosen_model(tmp_path, audio, monkeypatch):
+    path = tmp_path / "transcription.ini"
+    path.write_text(textwrap.dedent(CONFIG).format(env_file=tmp_path / "none.env")
+                    .replace("language = ru", "language = ru\nprompt = Write a verbatim transcript."))
+    seen = _capture_options(monkeypatch)
+    reachable(monkeypatch, "fast-cloud")
+    assert runner.main([str(audio), "--config", str(path)]) == 0
+    assert seen[0]["prompt"] == "Write a verbatim transcript."
+
+
+def test_model_prompt_overrides_defaults_prompt(tmp_path, audio, monkeypatch):
+    path = tmp_path / "transcription.ini"
+    path.write_text(textwrap.dedent(CONFIG).format(env_file=tmp_path / "none.env")
+                    .replace("language = ru", "language = ru\nprompt = default text")
+                    .replace("[model.fast-cloud]\nkind = gemini", "[model.fast-cloud]\nkind = gemini\nprompt = model text"))
+    seen = _capture_options(monkeypatch)
+    reachable(monkeypatch, "fast-cloud")
+    assert runner.main([str(audio), "--config", str(path)]) == 0
+    assert seen[0]["prompt"] == "model text"
+
+
+def test_gemini_dispatch_passes_the_prompt(monkeypatch, audio):
+    from multimodal_transcription_core import gemini_client
+    calls = []
+
+    class FakeGemini:
+        def __init__(self, **kwargs):
+            pass
+
+        def speech_to_text(self, path, model=None, language=None, prompt=None, **kwargs):
+            calls.append(prompt)
+            return {"text": "ok", "no_speech": False}
+
+    monkeypatch.setattr(gemini_client, "GeminiAPI", FakeGemini)
+    result = runner.transcribe_with_model("m", {"kind": "gemini", "prompt": "VERBATIM"}, audio, "ru")
+    assert result["text"] == "ok"
+    assert calls == ["VERBATIM"]
+
+
+def test_defaults_prompt_is_not_sent_to_whisper_models(tmp_path):
+    import configparser
+    config = configparser.ConfigParser()
+    config.read_string("[defaults]\nprompt = Gemini instructions\n")
+    assert runner.model_spec(config, "w", {"kind": "groq"}).prompt is None
+    assert runner.model_spec(config, "g", {"kind": "gemini"}).prompt == "Gemini instructions"
+
+
+def test_example_config_ships_a_verbatim_default_prompt():
+    import configparser
+    from pathlib import Path
+    parser = configparser.ConfigParser()
+    parser.read(Path(__file__).resolve().parents[1] / "transcription.example.ini", encoding="utf-8")
+    assert "verbatim" in parser.get("defaults", "prompt").lower()

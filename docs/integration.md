@@ -41,7 +41,7 @@ A limit of `0` (shown in AI Studio for models your tier doesn't include) stops r
 # CORE = this checkout. In the VM: /Volumes/VM-shared/projects/multimodal-transcription-core
 # On the host, use the Mac's own path to the same folder.
 CORE=/Volumes/VM-shared/projects/multimodal-transcription-core
-<app>/.venv/bin/pip install "$CORE"          # or: pip install dist/multimodal_transcription_core-0.2.0-py3-none-any.whl
+<app>/.venv/bin/pip install "$CORE"          # or: pip install dist/multimodal_transcription_core-0.3.0-py3-none-any.whl
 <app>/.venv/bin/transcription-core --list-models --config ~/.config/transcription/transcription.ini
 ```
 
@@ -112,6 +112,44 @@ If they overlap anyway, the server's 429 is handled: it waits as long as the ser
   It reads `[limits] tiers` and any `rpm`/`tpm`/`rpd` overrides in each `[provider.*]` section of its `config.ini`. Any other caller is protected only if it passes a `RateLimiter`.
 - **Clip Smith:** doesn't call the core today. Its transcription is local whisper plus `scripts/transcribe/correct_transcript_gemini.py`.
   Any new cloud transcription step should use the snippet above with the shared config, not a new Gemini client.
+
+## Migration notes: 0.2.0 → 0.3.0
+
+Both apps must review these before upgrading; signatures are unchanged, behaviour is not.
+
+- **New primary API, same path as the CLI:** `transcribe_file(audio, ModelSpec(...), ...)` for any provider kind
+  (Gemini REST and Live, Groq, OpenAI-compatible HTTP), `transcribe_best(...)` (ranking + fallback),
+  `transcribe_fused(...)`, `verify_model(spec)`. `ModelSpec.from_options(name, dict(config["model.<name>"]))`
+  builds a spec from a config section.
+- **Changed: failures raise.** `GeminiAPI.speech_to_text` raises `ResponseError` (also a `GeminiAPIError`)
+  for blocked, empty, malformed and truncated (`MAX_TOKENS`) responses and for whole-response repetition
+  loops, instead of returning `[PARSE_ERROR] ...` / `[HALLUCINATION]` text with `success=True`.
+  `GeminiAPI.generate_text` raises on a truncated generation instead of returning the partial text.
+- **Changed: long files never return holes as success.** `transcribe_large` raises
+  `IncompleteTranscriptError` when any part failed; `error.result` holds the partial transcript (with
+  `[Part N - TRANSCRIPTION FAILED]` markers, `success=False`) and `error.failed_parts`. All parts failing
+  still re-raises the first part's original error. A boundary that cannot be joined safely raises
+  `ReconstructionError` instead of concatenating (which duplicated overlap). The `[Parts 1-3]` headers are gone.
+- **Changed: unknown usage is `None`.** `input_tokens`/`output_tokens` are the provider's reported values or
+  `None`; they are no longer zero-filled. Code that sums them must skip `None`.
+- **New result keys:** `no_speech` (explicit silence), `provider`, `plain_text`, `segments`, `features`,
+  `settings`, `audio` (source hash, loudness assessment, enhanced file), `warnings`, `boundaries`, `client`.
+- **Errors:** every typed error derives from `TranscriptionError`, which derives from `RuntimeError`, so
+  `except RuntimeError` still catches them. `GeminiAPIError` and `GroqAPIError` now derive from it too and
+  carry `.status` (HTTP status) when there was one. Rate-limit errors are unchanged and never wrapped.
+- **Changed: `transcribe_http` / `transcription-core http`** now use the shared retry policy (429/5xx) and
+  accept `limiter=`; a non-200 raises `HTTPProviderError`, which is still a `urllib.error.HTTPError`.
+- **Changed: chunk boundaries** are spread evenly, so no part exceeds `chunk_sec + overlap_sec` (the last
+  part could reach 1.5x before). Starts stay on round numbers when the duration is a multiple of the chunk.
+- **CLI:** new flags `--speakers/--no-speakers`, `--sounds/--no-sounds`, `--timestamps none|major|phrase`,
+  `--enhance/--no-enhance`, `--fuse MODELS`, `--receipt`; `bench` subcommand. Without `-m` a failing model
+  falls back down the ranking; with `-m` it exits 1. Saved documents add `model:`, `features:`, `settings:`,
+  `audio:`, `fallback:` and `warning:` lines after `src:`. Exit codes: 0 ok, 1 transcription failed,
+  2 usage or configuration error.
+- **Enhancement is automatic** (owner decision): problem audio gets `<stem>.enhanced-<id>.flac` beside the
+  source, and that copy is transcribed. Pass `enhance=False` (`--no-enhance`) to keep apps' current behaviour.
+- `[defaults] prompt` in the CLI config applies to Gemini models only (Whisper prompts are context, not
+  instructions); a model section's own `prompt` applies to that model.
 
 ## Migration notes: 0.1.0 → 0.2.0
 

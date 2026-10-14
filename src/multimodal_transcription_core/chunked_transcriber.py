@@ -33,6 +33,8 @@ GeminiAPI = _gemini_client.GeminiAPI
 GeminiModel = _gemini_client.GeminiModel
 GeminiAPIError = _gemini_client.GeminiAPIError
 RateLimitError = _rate_limiter.RateLimitError
+from .errors import IncompleteTranscriptError
+from .transcription_types import sum_known
 
 
 def _load_logger():
@@ -122,10 +124,11 @@ class ChunkedMergeAPI:
 def transcribe_large(audio_path: Union[str, Path], api: Optional[GeminiAPI] = None,
                      model: Optional[str] = None) -> Dict[str, Any]:
     """
-    Transcribe an audio file, handling large files via chunking.
+    Transcribe a Gemini recording of any length (compatibility wrapper).
 
-    Drop-in replacement for standard transcriber. Auto-detects large files
-    and splits them into chunks for processing.
+    Runs the shared path, engine.transcribe_file, with one Gemini model: files
+    longer than CHUNK_THRESHOLD are split with overlap and rebuilt without
+    duplicated or missing boundary speech.
 
     Args:
         audio_path: Path to the audio file
@@ -135,142 +138,28 @@ def transcribe_large(audio_path: Union[str, Path], api: Optional[GeminiAPI] = No
             transcribe() default for short files; gemini-3.6-flash for chunks/merges.
 
     Returns:
-        TranscriptionResult dict with keys:
-            - text: Transcription text
-            - duration: Audio duration in seconds
-            - success: Whether transcription was successful
-            - chunks: Number of chunks processed (if chunked)
+        The common result dict (text, duration, success, no_speech, chunks, usage, ...).
 
     Raises:
         FileNotFoundError: If the audio file does not exist
-        RuntimeError: If transcription fails
+        IncompleteTranscriptError: Some parts failed; the partial result is attached
+        ReconstructionError: Parts could not be joined safely
+        RateLimitError subclasses: unchanged
     """
+    from . import engine
     from .gemini_live import LIVE_MODELS
     model_name = model.value if isinstance(model, GeminiModel) else model
     if model_name in LIVE_MODELS:
         raise ValueError("Live models require transcribe_live; REST chunk merging is unsupported")
     path = Path(audio_path)
-
-    # Validate file exists
     if not path.exists():
         raise FileNotFoundError(f"Audio file not found: {path}")
-
-    # Get duration
-    duration = get_duration(str(path))
-    if duration is None:
-        raise RuntimeError(f"Could not determine duration of {path}")
-
-    logger.info(f"Processing {path.name} ({duration:.0f}s / {duration/60:.1f}min)")
-
-    # If under threshold, use standard transcription
-    if duration < CHUNK_THRESHOLD:
-        logger.info("File under threshold, using standard transcription")
-        return _standard_transcribe(str(path), api=api, model=model)
-
-    # Large file - need to chunk
-    logger.info(f"File over {CHUNK_THRESHOLD}s threshold, chunking...")
-
-    # Split into chunks
-    chunks = split_audio(str(path), chunk_sec=1800, overlap_sec=10)
-    logger.info(f"Created {len(chunks)} chunks")
-
-    # One client for every chunk and merge, so they share its rate limiting
-    api = api if api is not None else GeminiAPI()
-    chunk_model = model or GeminiModel.GEMINI_3_6_FLASH.value
-
-    # Transcribe each chunk
-    transcripts: List[Dict[str, Any]] = []
-    total_input_tokens = 0
-    total_output_tokens = 0
-    total_processing_time = 0.0
-
-    parse_error_details: List[str] = []
-    first_chunk_exception: Optional[BaseException] = None
-
-    for i, chunk in enumerate(chunks):
-        logger.info(f"Transcribing chunk {i+1}/{len(chunks)}: {chunk.start_time:.0f}s - {chunk.end_time:.0f}s")
-
-        try:
-            result = _transcribe_chunk(chunk.path, api, model=chunk_model)
-
-            # A chunk-level [PARSE_ERROR] (e.g. Gemini PROHIBITED_CONTENT on one segment)
-            # must be converted to [TRANSCRIPTION FAILED] here. Otherwise the merger
-            # treats it as ordinary text, the marker survives into the merged output,
-            # and pipeline-level validation discards every chunk's transcription.
-            chunk_text = result.get("text", "") or ""
-            if chunk_text.lstrip().startswith("[PARSE_ERROR]"):
-                logger.error(f"Chunk {i+1} returned parse error: {chunk_text[:200]}")
-                parse_error_details.append(chunk_text.lstrip()[len("[PARSE_ERROR]"):].strip())
-                result = {**result, "text": "[TRANSCRIPTION FAILED]", "success": False}
-
-            transcripts.append(result)
-
-            total_input_tokens += result.get("input_tokens", 0)
-            total_output_tokens += result.get("output_tokens", 0)
-            total_processing_time += result.get("processing_time", 0)
-
-            logger.info(f"Chunk {i+1} transcribed: {len(result.get('text', ''))} chars")
-        except RateLimitError:
-            # A quota stop must not leave silent holes in a merged transcript.
-            cleanup_chunks(chunks)
-            raise
-        except Exception as e:
-            logger.error(f"Failed to transcribe chunk {i+1}: {e}")
-            if first_chunk_exception is None:
-                first_chunk_exception = e
-            transcripts.append({"text": "[TRANSCRIPTION FAILED]", "success": False})
-
-    # If at least one chunk failed and no chunk produced actual speech, raise so
-    # the pipeline writes an error sidecar instead of producing markdown whose body
-    # is only [Part N - SILENCE/FAILED] markers. All-silence is a valid output and
-    # falls through; mixed speech/silence/failure also falls through (merger handles
-    # markers inline). Re-raise the original chunk exception when possible so
-    # pipeline.run()'s error_type heuristics (auth/timeout/conversion) still match.
-    def _is_failed(t):
-        return "[TRANSCRIPTION FAILED]" in (t.get("text", "") or "")
-
-    def _is_silence(t):
-        # Match the merger's silence condition (chunk_merger.py:147) plus whitespace-only
-        stripped = (t.get("text", "") or "").strip()
-        return not stripped or stripped.lower() == "[silence]"
-
-    has_failed_chunk = any(_is_failed(t) for t in transcripts)
-    has_speech_chunk = any(
-        not _is_failed(t) and not _is_silence(t)
-        for t in transcripts
-    )
-    if has_failed_chunk and not has_speech_chunk:
-        cleanup_chunks(chunks)
-        if first_chunk_exception is not None:
-            raise first_chunk_exception
-        if parse_error_details:
-            detail = parse_error_details[0]
-            raise RuntimeError(f"[PARSE_ERROR] all {len(transcripts)} chunks failed: {detail}")
-        raise RuntimeError(f"All {len(transcripts)} chunks failed to transcribe")
-
-    # Merge transcripts
-    logger.info("Merging transcripts...")
-    merge_api = ChunkedMergeAPI(api, model=model or MERGE_MODEL)
-    try:
-        merged_text = merge_all_chunks(transcripts, merge_api)
-    except RateLimitError:
-        cleanup_chunks(chunks)
-        raise
-
-    # Clean up temp chunk files
-    cleanup_chunks(chunks)
-
-    # Build result
-    result = {
-        "text": merged_text,
-        "duration": duration,
-        "processing_time": total_processing_time,
-        "input_tokens": total_input_tokens,
-        "output_tokens": total_output_tokens,
-        "model": chunk_model,
-        "success": True,
-        "chunks": len(chunks),
-    }
-
-    logger.info(f"Transcription complete: {len(merged_text)} chars from {len(chunks)} chunks")
-    return result
+    if model_name is None:
+        duration = engine.get_duration(str(path))
+        if duration is None:
+            raise RuntimeError(f"Could not determine duration of {path}")
+        model_name = (GeminiModel.GEMINI_3_FLASH_PREVIEW.value if duration < CHUNK_THRESHOLD
+                      else GeminiModel.GEMINI_3_6_FLASH.value)
+    spec = engine.ModelSpec(name=model_name, kind="gemini", model=model_name,
+                            chunk_seconds=CHUNK_THRESHOLD, merge_model=model_name if model else MERGE_MODEL)
+    return engine.transcribe_file(path, spec, gemini_api=api)

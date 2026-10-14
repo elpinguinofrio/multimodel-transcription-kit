@@ -14,7 +14,10 @@ from typing import Any, Dict, Optional, Union
 
 import requests
 
+from .errors import ProviderError, ResponseError, with_status as _with_status
 from .request_policy import send_with_limits
+from .transcription_types import is_no_speech
+from .usage import usage_fields
 
 logger = logging.getLogger("stt_api_groq")
 
@@ -30,8 +33,21 @@ class STTModel(Enum):
     DISTIL_WHISPER_LARGE_V3_EN = "distil-whisper-large-v3-en"
 
 
-class STTAPIError(Exception):
+class STTAPIError(ProviderError):
     """Raised when the Groq STT client encounters a fatal error."""
+
+
+class STTResponseError(STTAPIError, ResponseError):
+    """Groq answered 200 without a usable transcript."""
+
+
+def _common_fields(result, model, text):
+    """The keys every provider result carries; usage is reported or None."""
+    usage = usage_fields(result)
+    result.update({"text": text, "model": model, "provider": "groq", "success": True,
+                   "no_speech": is_no_speech(text), "input_tokens": usage["input_tokens"],
+                   "output_tokens": usage["output_tokens"]})
+    return result
 
 
 class STTAPI:
@@ -124,6 +140,8 @@ class STTAPI:
     ) -> Dict[str, Any]:
         if response_format not in self.VALID_FORMATS:
             raise ValueError(f"response_format must be one of {self.VALID_FORMATS}")
+        # A model id string works too, so newly served Whisper models need no enum change.
+        model_name = model.value if isinstance(model, STTModel) else str(model)
 
         temp_file_path = None
         audio_path = None
@@ -195,7 +213,7 @@ class STTAPI:
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
         data = {
-            "model": model.value,
+            "model": model_name,
             "response_format": response_format,
         }
         # Only include language if explicitly specified (omit for auto-detect)
@@ -204,7 +222,7 @@ class STTAPI:
         if prompt:
             data["prompt"] = prompt
 
-        logger.info("Sending request to Groq API (model=%s)", model.value)
+        logger.info("Sending request to Groq API (model=%s)", model_name)
         started = time.time()
         try:
             res = send_with_limits(
@@ -216,7 +234,7 @@ class STTAPI:
                     data=data,
                     timeout=self.timeout,
                 ),
-                limiter=self.rate_limiter, key=model.value, max_retries=self.max_retries,
+                limiter=self.rate_limiter, key=model_name, max_retries=self.max_retries,
                 base_delay=self.retry_base_delay, max_delay=self.max_retry_delay,
                 usage_log=self.usage_log, provider="groq", operation="transcription",
             )
@@ -226,7 +244,7 @@ class STTAPI:
                 except Exception:
                     detail = res.text
                 logger.error("API error %d: %s", res.status_code, detail)
-                raise STTAPIError(f"API error {res.status_code}: {detail}")
+                raise _with_status(STTAPIError(f"API error {res.status_code}: {detail}"), res.status_code)
 
             processing_time = time.time() - started
             logger.info("API response received in %.2f seconds", processing_time)
@@ -241,21 +259,19 @@ class STTAPI:
                     rt_factor = processing_time / duration_sec
                     logger.info("Processing speed: %.2fx realtime", rt_factor)
 
-                return {
-                    "text": text,
-                    "duration": duration_sec,
-                    "processing_time": processing_time,
-                    "success": True,
-                }
+                return _common_fields({"duration": duration_sec, "processing_time": processing_time},
+                                      model_name, text)
 
-            result = res.json()
-            result.update(
-                {
-                    "duration": duration_sec,
-                    "processing_time": processing_time,
-                    "success": True,
-                }
-            )
+            try:
+                result = res.json()
+            except ValueError as exc:
+                raise STTResponseError(f"200 but body was not valid JSON: {exc}") from exc
+            if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+                raise STTResponseError("Groq response lacks string text")
+            raw = dict(result)
+            result.update({"duration": duration_sec, "processing_time": processing_time,
+                           "raw_response": raw, "request": {k: v for k, v in data.items()}})
+            _common_fields(result, model_name, result["text"])
 
             # Log the recognized text at INFO level
             logger.info("Speech recognition result: %s", result.get("text", ""))

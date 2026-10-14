@@ -1,0 +1,11 @@
+{
+  "note": "Approved public benchmark audio. scripts/verify.py refuses any other audio and any change to these.",
+  "samples": [
+    {
+      "path": "benchmark/samples/120s-diary-ru/120s-diary-ru.wav",
+      "sha256": "9d828345ddfb9ddb48f8ad797b147bc3362d71fd77c0044d757b610f63a3e6d5",
+      "duration_seconds": 120.0,
+      "terms": "README.md#audio-terms"
+    }
+  ]
+}

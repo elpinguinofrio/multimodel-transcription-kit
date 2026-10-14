@@ -5,6 +5,25 @@ import pytest
 
 import multimodal_transcription_core as core
 from multimodal_transcription_core import chunked_transcriber, transcriber
+from multimodal_transcription_core import engine
+
+
+def engine_seams(tmp_path, duration, chunks=2):
+    """Patch the engine's duration and splitting; chunk files land in its work dir."""
+    made = []
+
+    def split(path, chunk_sec, overlap_sec, output_dir):
+        from pathlib import Path
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        out = []
+        for i in range(chunks):
+            chunk = Path(output_dir) / f"c{i}.m4a"
+            chunk.touch()
+            made.append(chunk)
+            out.append(MagicMock(path=str(chunk), start_time=i * 1800.0, end_time=(i + 1) * 1800.0 + 10))
+        return out
+    return made, patch.object(engine, "get_duration", return_value=duration), \
+        patch.object(engine, "split_audio", side_effect=split)
 
 
 def test_package_exports_limiter_types():
@@ -49,29 +68,26 @@ def test_merge_failure_returns_empty_but_quota_propagates():
 def test_quota_exhausted_aborts_chunked_transcription(tmp_path):
     audio = tmp_path / "long.m4a"
     audio.touch()
-    chunks = [MagicMock(path=f"/tmp/c{i}.m4a", start_time=i * 1800, end_time=(i + 1) * 1800)
-              for i in range(3)]
-    api = MagicMock()
-    with patch.object(chunked_transcriber, "get_duration", return_value=5400.0), \
-         patch.object(chunked_transcriber, "split_audio", return_value=chunks), \
-         patch.object(chunked_transcriber, "cleanup_chunks") as cleanup, \
-         patch.object(chunked_transcriber, "_transcribe_chunk", side_effect=[
-             {"text": "part one", "success": True},
-             core.QuotaExhausted("m", 0.0, "test"),
-             {"text": "part three", "success": True}]):
+    made, duration, split = engine_seams(tmp_path, 5400.0, chunks=3)
+    request = MagicMock(side_effect=[{"text": "part one", "success": True},
+                                     core.QuotaExhausted("m", 0.0, "test"),
+                                     {"text": "part three", "success": True}])
+    with duration, split, patch.object(engine, "_request", request):
         with pytest.raises(core.QuotaExhausted):
-            chunked_transcriber.transcribe_large(audio, api=api)
-    cleanup.assert_called_once_with(chunks)
+            chunked_transcriber.transcribe_large(audio, api=MagicMock())
+    assert request.call_count == 2                       # no request after the quota stop
+    assert made and not any(f.exists() for f in made)   # chunk files cleaned up
 
 
 def test_short_file_passes_client_to_standard_path(tmp_path):
     audio = tmp_path / "short.m4a"
     audio.touch()
     api = MagicMock()
-    with patch.object(chunked_transcriber, "get_duration", return_value=60.0), \
-         patch.object(chunked_transcriber, "_standard_transcribe", return_value={"text": "t"}) as std:
+    request = MagicMock(return_value={"text": "t"})
+    with patch.object(engine, "get_duration", return_value=60.0), patch.object(engine, "_request", request):
         chunked_transcriber.transcribe_large(audio, api=api)
-    assert std.call_args.kwargs["api"] is api
+    clients = request.call_args[0][3]
+    assert clients.gemini is api
 
 
 def test_failed_boundary_merge_keeps_every_word():
@@ -86,45 +102,46 @@ def test_failed_boundary_merge_keeps_every_word():
 def test_quota_during_merge_still_cleans_up_chunks(tmp_path):
     audio = tmp_path / "long.m4a"
     audio.touch()
-    chunks = [MagicMock(path=f"/tmp/c{i}.m4a", start_time=i * 1800, end_time=(i + 1) * 1800)
-              for i in range(2)]
-    with patch.object(chunked_transcriber, "get_duration", return_value=3600.0), \
-         patch.object(chunked_transcriber, "split_audio", return_value=chunks), \
-         patch.object(chunked_transcriber, "cleanup_chunks") as cleanup, \
-         patch.object(chunked_transcriber, "_transcribe_chunk", return_value={"text": "t", "success": True}), \
-         patch.object(chunked_transcriber, "merge_all_chunks",
-                      side_effect=core.QuotaExhausted("m", 0.0, "test")):
+    made, duration, split = engine_seams(tmp_path, 3600.0)
+    with duration, split, \
+         patch.object(engine, "_request", return_value={"text": "t", "success": True}), \
+         patch.object(engine, "reconstruct", side_effect=core.QuotaExhausted("m", 0.0, "test")):
         with pytest.raises(core.QuotaExhausted):
             chunked_transcriber.transcribe_large(audio, api=MagicMock())
-    cleanup.assert_called_once_with(chunks)
+    assert made and not any(f.exists() for f in made)
 
 
 def test_transcribe_large_model_is_limited_for_chunks_and_merge(tmp_path):
     """Every request of a long file counts under the model the caller chose."""
     audio = tmp_path / "long.m4a"
     audio.touch()
-    chunks = [MagicMock(path=str(tmp_path / f"c{i}.m4a"), start_time=i * 1800, end_time=(i + 1) * 1800)
-              for i in range(2)]
-    for c in chunks:
-        open(c.path, "wb").close()
     rl = core.RateLimiter({"gemini-3.5-flash-lite": core.Limits(rpd=500)})
     api = core.GeminiAPI(rate_limiter=rl)
-    ok = MagicMock(status_code=200, headers={})
-    ok.json.return_value = {"candidates": [{"content": {"parts": [{"text": "words " * 200}]}}]}
-    with patch.object(chunked_transcriber, "get_duration", return_value=3600.0), \
-         patch.object(chunked_transcriber, "split_audio", return_value=chunks), \
-         patch.object(chunked_transcriber, "cleanup_chunks"), \
+
+    def reply(text):
+        response = MagicMock(status_code=200, headers={})
+        response.json.return_value = {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+        return response
+    first = " ".join(f"first{i}" for i in range(100))
+    second = " ".join(f"second{i}" for i in range(100))
+    # No words shared at the boundary, so the merge model is asked once.
+    responses = [reply(first), reply(second), reply(first[-200:] + " " + second[:200])]
+    made, duration, split = engine_seams(tmp_path, 3600.0)
+    with duration, split, \
          patch.object(api, "_get_audio_duration", return_value=1800.0, create=True), \
-         patch("requests.post", return_value=ok):
+         patch("requests.post", side_effect=responses):
         result = chunked_transcriber.transcribe_large(audio, api=api, model="gemini-3.5-flash-lite")
     assert result["model"] == "gemini-3.5-flash-lite"
+    assert result["boundaries"][0]["method"] == "model"
     assert rl.usage("gemini-3.5-flash-lite")["today"] == 3   # 2 chunks + 1 merge
 
 
 def test_transcribe_large_short_file_uses_chosen_model(tmp_path):
     audio = tmp_path / "short.m4a"
     audio.touch()
-    with patch.object(chunked_transcriber, "get_duration", return_value=60.0), \
-         patch.object(chunked_transcriber, "_standard_transcribe", return_value={"text": "t"}) as std:
+    request = MagicMock(return_value={"text": "t"})
+    with patch.object(engine, "get_duration", return_value=60.0), patch.object(engine, "_request", request):
         chunked_transcriber.transcribe_large(audio, api=MagicMock(), model="gemini-3.5-flash-lite")
-    assert std.call_args.kwargs["model"] == "gemini-3.5-flash-lite"
+    assert request.call_args[0][0].model == "gemini-3.5-flash-lite"
+
+

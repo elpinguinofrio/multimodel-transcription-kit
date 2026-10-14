@@ -19,6 +19,22 @@ _logger_module = _load_logger()
 logger = _logger_module.getLogger("chunk_merger")
 
 
+BOUNDARY_PROMPT = """These two text segments are from consecutive audio transcription chunks.
+They overlap by approximately 10 seconds of audio. Combine them into ONE coherent text,
+removing any duplicated words/phrases from the overlap.
+
+END OF CHUNK A:
+---
+{tail}
+---
+
+START OF CHUNK B:
+---
+{head}
+---
+
+Output ONLY the combined text (the merged boundary region). No explanation, no preamble."""
+
 # Window size for boundary extraction (chars)
 # ~500 chars ≈ 30 seconds of speech, plenty for 10s overlap
 WINDOW = 500
@@ -71,22 +87,7 @@ def merge_adjacent_chunks(chunk_a: str, chunk_b: str, api: Any) -> str:
         prefix_a = chunk_a[:-WINDOW]
         suffix_b = chunk_b[WINDOW:]
 
-    # Build prompt for LLM
-    prompt = f"""These two text segments are from consecutive audio transcription chunks.
-They overlap by approximately 10 seconds of audio. Combine them into ONE coherent text,
-removing any duplicated words/phrases from the overlap.
-
-END OF CHUNK A:
----
-{tail_a}
----
-
-START OF CHUNK B:
----
-{head_b}
----
-
-Output ONLY the combined text (the merged boundary region). No explanation, no preamble."""
+    prompt = BOUNDARY_PROMPT.format(tail=tail_a, head=head_b)
 
     logger.debug(f"Merging chunks: A ends with '{tail_a[-50:]}...', B starts with '...{head_b[:50]}'")
 

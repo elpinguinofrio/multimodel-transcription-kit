@@ -7,6 +7,7 @@ Uses ffmpeg with stream copy (no re-encoding) for fast, lossless splitting.
 
 import importlib.util
 import logging
+import math
 import os
 import subprocess
 import tempfile
@@ -109,8 +110,8 @@ def split_audio(
 
     Example:
         For a 1-hour file with 30-min chunks and 10s overlap:
-        - Chunk 0: 00:00 - 30:00
-        - Chunk 1: 29:50 - 60:00 (starts 10s before previous ends)
+        - Chunk 0: 00:00 - 30:10 (extends 10s into the next chunk)
+        - Chunk 1: 30:00 - 60:00
     """
     if chunk_sec <= 0 or overlap_sec < 0:
         raise ValueError("chunk_sec must be positive and overlap_sec nonnegative")
@@ -137,60 +138,31 @@ def split_audio(
     else:
         os.makedirs(output_dir, exist_ok=True)
 
-    # Calculate chunk boundaries with overlap
-    # Overlap is achieved by EXTENDING each chunk into the next one's territory
-    # This keeps start times at round numbers (0, 10min, 20min, etc.)
+    # Even chunk boundaries: n chunks start every `step` seconds and each extends
+    # overlap_sec into the next, so no chunk is longer than chunk_sec + overlap_sec
+    # (a provider's hard limit) and the last one is never a sliver. When the
+    # duration is a multiple of chunk_sec, starts stay at round numbers.
+    count = math.ceil(total_duration / chunk_sec)
+    step = total_duration / count
     chunks: List[AudioChunk] = []
-    step = chunk_sec  # Chunks start at round intervals (0, 600, 1200, ...)
-    start_time = 0.0
-    index = 0
-
     input_ext = Path(input_path).suffix
 
-    while start_time < total_duration:
-        # Calculate end time - extend by overlap_sec to create overlap with next chunk
-        # If remaining audio is less than 1.5x chunk size, extend to end
-        remaining = total_duration - start_time
-        if remaining <= chunk_sec * 1.5:
-            end_time = total_duration
-        else:
-            end_time = start_time + chunk_sec + overlap_sec  # Extend into next chunk
-
-        # Generate output path
+    for index in range(count):
+        start_time = index * step
+        end_time = total_duration if index == count - 1 else min(total_duration, start_time + step + overlap_sec)
         output_path = os.path.join(output_dir, f"chunk_{index:03d}{input_ext}")
-
-        # ffmpeg command to extract chunk
-        # -ss before -i for fast seek (input seeking)
-        # -t for duration
-        # -c copy for stream copy (no re-encoding)
-        args = [
+        # -ss before -i for fast input seeking; -c copy keeps the original encoding.
+        _run_ffmpeg([
             "-ss", str(start_time),
             "-i", input_path,
             "-t", str(end_time - start_time),
             "-c", "copy",
-            "-y",  # Overwrite output
-            output_path
-        ]
-
-        _run_ffmpeg(args)
-
-        chunks.append(AudioChunk(
-            path=output_path,
-            start_time=start_time,
-            end_time=end_time,
-            index=index,
-            temporary=True,
-        ))
-
+            "-y",
+            output_path,
+        ])
+        chunks.append(AudioChunk(path=output_path, start_time=start_time, end_time=end_time,
+                                 index=index, temporary=True))
         logger.debug(f"Created chunk {index}: {start_time:.1f}s - {end_time:.1f}s")
-
-        # If we've reached the end, stop
-        if end_time >= total_duration:
-            break
-
-        # Move to next chunk
-        start_time += step
-        index += 1
 
     logger.info(f"Created {len(chunks)} chunks")
     return chunks

@@ -36,14 +36,38 @@ Gemini varied ~8% in length across two runs of the same audio.
 pip install "git+https://github.com/elpinguinofrio/multimodal-transcription-core.git"
 ```
 
-```python
-from multimodal_transcription_core import transcribe_large
+Command line (configuration: copy `transcription.example.ini`):
 
-result = transcribe_large("recording.m4a")
+```sh
+transcription-core recording.m4a --config transcription.ini          # transcript to stdout
+transcription-core recording.m4a -d notes/ --config transcription.ini # notes/recording.<model>.md
+transcription-core recording.m4a -m whisper-large-v3 --timestamps phrase --no-enhance ...
+transcription-core recording.m4a -d notes/ --fuse gemini-3.5-flash-lite,whisper-large-v3 ...
+transcription-core --list-models --config transcription.ini           # reachability, quota, key/model check
 ```
 
-To stay under your API limits across apps, pass a shared `RateLimiter`; see
-[docs/integration.md](docs/integration.md).
+Library (the same path the command line runs):
+
+```python
+from multimodal_transcription_core import ModelSpec, RateLimiter, transcribe_file
+
+limiter = RateLimiter.from_config("/path/to/transcription.ini")   # once per process
+spec = ModelSpec(name="flash-lite", kind="gemini", model="gemini-3.5-flash-lite")
+result = transcribe_file("recording.m4a", spec, language="ru", limiter=limiter)
+print(result["text"], result["features"], result["warnings"])
+```
+
+Defaults on both: speaker labels and `*sound*` descriptions on, `major` timestamps
+from provider alignment, automatic loudness/noise enhancement into a separate file,
+long recordings split with overlap and rebuilt without duplicated boundary speech.
+A feature a model cannot supply is dropped with a warning; one you ask for
+explicitly raises `UnsupportedFeatureError`. Failures raise typed errors
+(`TranscriptionError` subclasses); silence is reported as `no_speech`.
+`transcribe_large()` and `transcribe()` remain for existing callers.
+
+See [docs/integration.md](docs/integration.md) for shared rate limits and
+migration notes, and [docs/operations.md](docs/operations.md) for dependencies,
+retries and recovery.
 
 Python 3.10+; conversion and splitting require `ffmpeg` and `ffprobe`. Code is
 [MIT licensed](LICENSE); benchmark audio has [separate terms](#audio-terms).

@@ -43,35 +43,17 @@ def build_limiter(cfg: configparser.ConfigParser):
     return RateLimiter.from_parser(cfg, section_prefix="provider.")
 
 
-def transcribe_one(kind: str, opts: dict, audio: Path, language: str, out_dir: Path,
+def transcribe_one(name: str, opts: dict, audio: Path, language: str,
                    limiter=None, usage_log=None) -> dict:
-    """Dispatch to the right client and return {text, seconds}."""
+    """The library's one transcription path for every provider kind (conversion,
+    chunking, retries, limits); returns the full result including raw responses."""
+    from multimodal_transcription_core import ModelSpec, transcribe_file
     started = time.perf_counter()
-
-    if kind == "http":
-        import json
-        from multimodal_transcription_core import transcribe_http
-        # the library never overwrites, so give each run its own work dir
-        work = out_dir / f"_raw_{opts['model']}_{time.strftime('%Y%m%d-%H%M%S')}"
-        transcribe_http(audio, opts["endpoint"], work,
-                        model=opts["model"], language=language, timeout=3600, usage_log=usage_log)
-        text = json.loads((work / "response.json").read_text())["text"]
-
-    elif kind == "groq":
-        from multimodal_transcription_core import GroqAPI, STTModel
-        result = GroqAPI(rate_limiter=limiter, usage_log=usage_log).speech_to_text(str(audio), model=STTModel(opts["model"]),
-                                          language=language, response_format="verbose_json")
-        text = result["text"]
-
-    elif kind == "gemini":
-        from multimodal_transcription_core import GeminiAPI
-        result = GeminiAPI(rate_limiter=limiter, usage_log=usage_log).speech_to_text(str(audio), model=opts["model"], language=language)
-        text = result["text"]
-
-    else:
-        raise ValueError(f"Unknown provider kind: {kind}")
-
-    return {"text": text, "seconds": time.perf_counter() - started}
+    spec = ModelSpec.from_options(name, opts)
+    result = transcribe_file(audio, spec, language=language, limiter=limiter,
+                             usage_log=usage_log, keep_raw=True)
+    return {"text": result["text"], "seconds": time.perf_counter() - started,
+            "result": result, "spec": spec}
 
 
 def main() -> int:
@@ -119,7 +101,7 @@ def main() -> int:
         }
         started = time.perf_counter()
         try:
-            r = transcribe_one(opts["kind"], opts, audio, language, run_dir, limiter=limiter, usage_log=usage_log)
+            r = transcribe_one(name, opts, audio, language, limiter=limiter, usage_log=usage_log)
         except Exception as exc:                  # noqa: BLE001 - record, keep going
             rec.update(status="failed", error_type=type(exc).__name__,
                        error=str(exc)[:2000], seconds=round(time.perf_counter() - started, 2))
@@ -130,6 +112,12 @@ def main() -> int:
                 n += 1
             dest = run_dir / f"{opts['model']} ({n}).txt"
             dest.write_text(r["text"], encoding="utf-8")
+            # Prompt, settings, client version, input hash and raw responses for this attempt.
+            from multimodal_transcription_core.receipts import build_receipt
+            receipt = build_receipt(r["result"], r["spec"], {"language": language}, transcript_file=dest.name)
+            (run_dir / "_details" / f"{dest.stem}.receipt.json").write_text(
+                json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            rec["receipt"] = f"_details/{dest.stem}.receipt.json"
             rec["attempt"] = n
             rec.update(status="ok", chars=len(r["text"]), words=len(r["text"].split()),
                        seconds=round(r["seconds"], 2), transcript=dest.name)

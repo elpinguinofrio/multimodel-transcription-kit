@@ -1,4 +1,12 @@
-"""Score model transcripts against a human draft without changing either file."""
+"""Score model transcripts against a human reference without changing either file.
+
+Accuracy claims need a provenance record beside the reference
+(reference.local.json, or --review): {"reference": <file name>, "sha256": <hex>,
+"origin": "human-from-audio", "status": "reviewed", "reviewed_by": ..., "reviewed_on": ...}.
+A reference seeded from a model's output, a draft, or a file whose hash changed
+is refused. --allow-unreviewed scores anyway and labels the report
+accuracy_claim: false.
+"""
 
 import argparse
 import hashlib
@@ -70,36 +78,81 @@ def score(reference_text: str, hypothesis_text: str) -> dict:
     }
 
 
+REVIEW_FILE = "reference.local.json"
+
+
+def review_problem(reference: Path, record) -> str:
+    """Why this reference cannot support an accuracy claim, or "" when it can."""
+    if record is None:
+        return f"no provenance record ({REVIEW_FILE} beside the reference, or --review)"
+    if record.get("sha256") != hashlib.sha256(reference.read_bytes()).hexdigest():
+        return "the reference changed since it was reviewed (sha256 differs)"
+    if record.get("origin") != "human-from-audio":
+        return f"origin is {record.get('origin')!r}; only a reference written by a person from the audio counts"
+    if record.get("status") != "reviewed" or not record.get("reviewed_by"):
+        return f"status is {record.get('status')!r}; it must be 'reviewed' with reviewed_by"
+    return ""
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--reference", required=True, type=Path)
     parser.add_argument("--hypothesis", required=True, type=Path, action="append")
+    parser.add_argument("--fused", type=Path,
+                        help="A fused transcript, compared with the strongest individual hypothesis")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--review", type=Path, help=f"Provenance record; default {REVIEW_FILE} beside the reference")
+    parser.add_argument("--allow-unreviewed", action="store_true",
+                        help="Score an unreviewed reference; the report makes no accuracy claim")
     args = parser.parse_args(argv)
     if args.output.exists():
         parser.error("Choose a new output file")
+    review_path = args.review or args.reference.parent / REVIEW_FILE
+    record = json.loads(review_path.read_text(encoding="utf-8")) if review_path.is_file() else None
+    problem = review_problem(args.reference, record)
+    if problem and not args.allow_unreviewed:
+        parser.error(f"Not an accuracy reference: {problem}. Use --allow-unreviewed for a labelled, "
+                     "non-claim comparison.")
     reference_text = args.reference.read_text(encoding="utf-8")
     unresolved = len(re.findall(
         r"<нераз(?:борчиво|бочиво)>|\[unclear[^]]*\]",
         reference_text.lower(),
     ))
     results = []
-    for hypothesis in args.hypothesis:
+    for hypothesis in args.hypothesis + ([args.fused] if args.fused else []):
         text = hypothesis.read_text(encoding="utf-8")
         results.append({
             "transcript": hypothesis.name,
             "transcript_sha256": hashlib.sha256(hypothesis.read_bytes()).hexdigest(),
+            "fused": hypothesis == args.fused,
             **score(reference_text, text),
         })
     results.sort(key=lambda item: (item["wer_percent"], item["cer_percent"], item["transcript"]))
+    fusion = None
+    if args.fused:
+        fused = next(r for r in results if r["fused"])
+        best = next(r for r in results if not r["fused"])
+        fusion = {"fused": fused["transcript"], "fused_wer_percent": fused["wer_percent"],
+                  "best_individual": best["transcript"], "best_individual_wer_percent": best["wer_percent"],
+                  "wer_delta_percent": round(fused["wer_percent"] - best["wer_percent"], 2),
+                  "improved": fused["wer_percent"] < best["wer_percent"]}
+    if problem:
+        status = f"unreviewed_reference_no_accuracy_claim: {problem}"
+    elif unresolved:
+        status = "reviewed_human_reference_with_unresolved_spans"
+    else:
+        status = "reviewed_human_reference"
     report = {
-        "status": "provisional_owner_transcript_with_unresolved_spans" if unresolved else "owner_transcript_not_second_listener_adjudicated",
+        "accuracy_claim": not problem,
+        "status": status,
+        "review": record if not problem else None,
         "reference": args.reference.name,
         "reference_sha256": hashlib.sha256(args.reference.read_bytes()).hexdigest(),
         "unresolved_speech_markers": unresolved,
         "normalization": "Unicode NFC; lowercase; yo-to-ye; keep alphanumeric Russian/Latin tokens; remove angle, parenthetical, square-bracket, and asterisk annotations; concatenate normalized tokens for CER",
         "limitation": "Unresolved speech spans cannot be excluded by time and may inflate or distort scores. Compare only runs of this exact sample.",
         "results": results,
+        "fusion": fusion,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8") as output:

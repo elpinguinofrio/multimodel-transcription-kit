@@ -1,42 +1,63 @@
-# Product — Multimodal Transcription Core
-// human written file, agent's aren't allowed to edit it.
+Product — Multimodal Transcription Core
 
-A Python library that turns an audio file into text through a chosen provider(s), and nothing else.
+Human-owned. Agents must never edit this file. Suggest changes in chat;
+the owner edits it. Generated designs, roadmaps, and plans must preserve
+every requirement and flag unresolved decisions.
 
-## In scope
+Features
 
-- Transcribes one audio file avaliable models; Gemini, Groq models like Whisper, or any OpenAI-compatible endpoint such a local parajeet
-- Converts input media to a format the selected provider accepts in memor
-- Splits audio over a provider's limit into chunks and merges the results into one transcript.
-- cli-runner as an exmaple: chose file, -d destination
-- for each model transcription format is this
--- file name (if file no stdou): orignam_file_name.<models>.(attemp if applicable).md
--- in file: src - full path to the source
--- transcription (see samples)
-- to make transcription better, can enhance auio files (saves this enhacened files in the folder besides source), reduce noice, isolte voices etc. 
-- depends on flag, timestamps are - none, major (like every scene change), by phrases (like a script for reel)
-- by default on: transribes and indicate differnet persons who speak,
-- by default on: transcirbes non-speak major sounds and effects as in movie subtitles: *sounds of steps*, *barking of dog* etc
-- all prev behavior is args that are flags with default on if use cli-runner
-- if files saves like in benchmarks, if several run - save all transcritpinos with (1,2,,3) see sample
-- root folder have config with all important vars: paths/urls, promts, settings, path to keys, etc. on file
+- Audio file in, text out.
+- Providers: Gemini, Groq Whisper, and configured OpenAI-compatible
+  endpoints, including local Parakeet.
+- Automatically converts input to the provider's format.
+- Splits long audio with small overlaps and reconstructs one transcript
+  without duplicated or missing boundary speech.
+- Shares rate limits and queues across apps to respect provider limits.
+- Records statistics for each model: calls, retries, elapsed time, and
+  available input/output token usage. Unavailable usage stays unknown.
+- Simple CLI: file to stdout, or -d destination directory to save a
+  Markdown transcript. Library arguments have corresponding CLI flags
+  with consistent defaults. Diagnostics go to stderr.
+- Output: <name>.<model>.md, with (2), (3), etc. on reruns. Preserve all
+  previous outputs. First line: src: <full path>. Include actual models
+  and settings used, such as temperature.
+- Picks the best reachable model unless -m specifies one. Model ranking
+  and permitted fallback routes must be explicit.
+- Speaker labels: on by default, with an option to disable.
+- Non-speech sounds, such as *dog barking*: on by default, with an option
+  to disable.
+- Timestamps: none, major, or phrase; major by default. Times come from
+  alignment, never guessed times.
+- Automatically checks loudness. Supports optional enhancement for noisy,
+  quiet, or loud audio, saved beside the source. Preserve the original
+  and record which audio version was transcribed.
+- Can run several models on the same input and combine their outputs.
+  Preserve individual results and evaluate whether fusion improves
+  transcription over the strongest individual model.
+- Benchmarks models on approved audio samples. Each run preserves its
+  outputs, model names, arguments, settings, and input identity.
+  Accuracy scores require a supplied and reviewed human reference.
+- Failures raise typed errors, never silent empty transcripts.
+  A successful recording with no speech is reported explicitly.
+- One explicit root configuration contains paths, URLs, prompts,
+  settings, and the key-file path. The library receives configuration
+  from its caller; importing it makes no provider calls or data writes.
+- Public on GitHub. Never publish private recordings, transcripts,
+  references, or credentials.
+- Exocortex, Clip Smith, and other apps use the installed library with
+  minimal import hassle.
+- Claude and Codex can use a skill that invokes transcription through
+  this library using the best available model.
+- Once finished and tested, it should work a month and a year later
+  without human maintenance or routine DevOps. Document external
+  dependencies, bounded retries, and recovery behavior.
+- Test CLI flags, provider clients, chunk reconstruction, and installed
+  package use. Report mocked checks separately from real provider and
+  application checks.
 
+Decisions still needed
 
-## Out of scope
-
-- Never discovers configuration; every key, model and setting arrives as an argument or an explicit env file.
-- Never renders subtitles, edits media, or publishes anything.
-- Never contacts a provider at import time.
-
-## Guarantees
-- Same file, provider and settings return the same transcript shape.
-- Every failure surfaces as a typed provider error, never as a silent empty transcript.
-- Timestamps come from provider alignment, never from a language model's guess.
-
-## Consumers
-- any repo like Exocortex and Clip-Smith can use it simple way from importing this repo somehow, it would be public on github
-
-## dd
-when you run CLI runner and give a path to some file it's in std output, prints the transcript. If no flag provides it use best available model, but also flag can specify the different model basically. You have a test which verifies what each flag works as expected. 
-There are 4-unit tests mock output for each provider is an integration test, they should use actual real providers. 
-It's expected that not all providers might be available over time, like but the local and host should be available. 
+- What makes a model "best," and which fallback routes are allowed?
+- What happens when a provider cannot supply a requested default feature?
+- When is automatic enhancement allowed, and what triggers it?
+- What happens when one model fails during fusion?

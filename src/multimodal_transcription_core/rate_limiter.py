@@ -261,6 +261,27 @@ class RateLimiter:
                 (key, now - WINDOW_SECONDS)).fetchone()
         return {"today": today, "last_minute": minute, "tokens_last_minute": tokens}
 
+    def exhausted(self, key: str) -> Optional[str]:
+        """Why `key` cannot be sent today (daily quota used, zero limit, daily block), or None.
+
+        Read-only: model selection uses it to skip a model without spending a request.
+        """
+        limits = self.limits.get(key)
+        if limits is not None and 0 in (limits.rpm, limits.tpm, limits.rpd):
+            return "limit is 0 for this model on this API tier"
+        now = self._clock()
+        with self._transaction(write=False) as db:
+            row = db.execute("SELECT until, reason FROM blocks WHERE key=? AND daily=1 AND until>?",
+                             (key, now)).fetchone()
+            if row:
+                return f"daily quota blocked: {row[1]}"
+            if limits is not None and limits.rpd is not None:
+                (today,) = db.execute("SELECT COUNT(*) FROM requests WHERE key=? AND ts>=?",
+                                      (key, quota_day_start(now))).fetchone()
+                if today >= limits.rpd:
+                    return f"daily quota used: {today}/{limits.rpd} requests today"
+        return None
+
     # ───────────────────────── internals ──────────────────────────
 
     def _set_block(self, key, until, daily, reason):

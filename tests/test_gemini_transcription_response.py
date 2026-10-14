@@ -24,10 +24,12 @@ def test_reads_transcription_parts(monkeypatch, parts, expected):
     assert result["text"] == expected
 
 
-def test_missing_transcription_keeps_parse_diagnostic(monkeypatch):
+def test_missing_transcription_raises_with_diagnostic(monkeypatch):
+    from multimodal_transcription_core import ResponseError
     api = GeminiAPI(throttle_rate=0)
     monkeypatch.setattr(api, "_rate_limit", lambda: None)
     response = Mock(status_code=200)
     response.json.return_value = {"candidates": [{"finishReason": "SAFETY"}]}
     monkeypatch.setattr(api, "_post_with_retry", lambda *a, **kw: response)
-    assert "[PARSE_ERROR] finishReason=SAFETY" in api.speech_to_text(b"synthetic")["text"]
+    with pytest.raises(ResponseError, match="finishReason=SAFETY"):
+        api.speech_to_text(b"synthetic")

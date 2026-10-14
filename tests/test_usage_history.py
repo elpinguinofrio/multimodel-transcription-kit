@@ -92,7 +92,7 @@ def test_default_large_transcription_records_chunks_and_merge_under_36(tmp_path,
     audio.write_bytes(b"synthetic")
     chunks = [SimpleNamespace(path=str(audio), start_time=i * 1800, end_time=(i + 1) * 1800)
               for i in range(2)]
-    from multimodal_transcription_core import chunked_transcriber as ct
+    from multimodal_transcription_core import engine as ct
     history = log_at(tmp_path / "usage.sqlite")
     limiter = core.RateLimiter({"gemini-3.6-flash": core.Limits(rpd=20)})
     with gateway([(200, GEMINI)]) as (url, _):
@@ -100,7 +100,6 @@ def test_default_large_transcription_records_chunks_and_merge_under_36(tmp_path,
         api = core.GeminiAPI(rate_limiter=limiter, usage_log=history)
         with patch.object(ct, "get_duration", return_value=3600), \
              patch.object(ct, "split_audio", return_value=chunks), \
-             patch.object(ct, "cleanup_chunks"), \
              patch.object(api, "_get_audio_duration", return_value=1800):
             result = core.transcribe_large(audio, api=api)
     assert result["model"] == "gemini-3.6-flash"

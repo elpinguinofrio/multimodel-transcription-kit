@@ -9,6 +9,7 @@ import importlib.util
 from pathlib import Path
 from typing import Union
 
+from .errors import TranscriptionError
 from .rate_limiter import RateLimitError
 
 
@@ -90,7 +91,7 @@ def transcribe(
             # language omitted for auto-detect
         )
         return result
-    except RateLimitError:
+    except (RateLimitError, TranscriptionError):
         raise
     except Exception as e:
         raise RuntimeError(f"Transcription failed: {e}") from e
