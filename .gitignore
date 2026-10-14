@@ -13,13 +13,14 @@ build/
 .codex/reflections/
 /.private/
 /AGENTS.md
-benchmark/reference.txt
-benchmark/reference.local.json
-benchmark/sample-120s-diary/README.md
-benchmark/sample-120s-diary/human-transcription-sample-120s-diary.txt
-benchmark/sample-120s-diary/runs/
 
 # example app local state
 examples/quickstart/.env
 examples/quickstart/transcripts/
 !examples/quickstart/.env.example
+
+# benchmark: audio + _meta are public; everything local stays out
+benchmark/samples/*/runs/
+benchmark/samples/*/human-transcription-reference.txt
+benchmark/samples/*/NOTES.md
+benchmark/samples/*/reference.local.json

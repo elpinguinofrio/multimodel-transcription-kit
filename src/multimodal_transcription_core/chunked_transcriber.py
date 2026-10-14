@@ -21,6 +21,7 @@ def _load_module(name: str):
 _audio_chunker = _load_module("audio_chunker")
 _chunk_merger = _load_module("chunk_merger")
 _gemini_client = _load_module("gemini_client")
+_rate_limiter = _load_module("rate_limiter")
 
 
 # Re-export for convenience
@@ -30,6 +31,8 @@ cleanup_chunks = _audio_chunker.cleanup_chunks
 merge_all_chunks = _chunk_merger.merge_all_chunks
 GeminiAPI = _gemini_client.GeminiAPI
 GeminiModel = _gemini_client.GeminiModel
+GeminiAPIError = _gemini_client.GeminiAPIError
+RateLimitError = _rate_limiter.RateLimitError
 
 
 def _load_logger():
@@ -44,21 +47,25 @@ logger = _logger_module.getLogger("chunked_transcriber")
 CHUNK_THRESHOLD = 1800  # 30 minutes
 
 
-def _standard_transcribe(audio_path: str) -> Dict[str, Any]:
+def _standard_transcribe(audio_path: str, api: Optional[GeminiAPI] = None,
+                         model: Optional[str] = None) -> Dict[str, Any]:
     """
     Transcribe audio using standard (non-chunked) method.
 
     Args:
         audio_path: Path to audio file
+        api: Configured GeminiAPI to use; default builds one
+        model: Gemini model name; default is transcribe()'s default
 
     Returns:
         TranscriptionResult dict
     """
     transcriber = _load_module("transcriber")
-    return transcriber.transcribe(audio_path)
+    return transcriber.transcribe(audio_path, api=api, model=model)
 
 
-def _transcribe_chunk(chunk_path: str, api: GeminiAPI) -> Dict[str, Any]:
+def _transcribe_chunk(chunk_path: str, api: GeminiAPI,
+                      model: Union[GeminiModel, str] = GeminiModel.GEMINI_3_5_FLASH) -> Dict[str, Any]:
     """
     Transcribe a single audio chunk.
 
@@ -71,7 +78,7 @@ def _transcribe_chunk(chunk_path: str, api: GeminiAPI) -> Dict[str, Any]:
     """
     result = api.speech_to_text(
         audio_input=chunk_path,
-        model=GeminiModel.GEMINI_3_5_FLASH,
+        model=model,
         response_format="text"
     )
     return result
@@ -103,63 +110,17 @@ class ChunkedMergeAPI:
         Returns:
             Generated text response
         """
-        import requests
-        import time
-
-        # Use configured model for merge operations
-        url = self.api.API_URL.format(model=self.model)
-        url += f"?key={self.api.api_key}"
-
-        payload = {
-            "contents": [{
-                "role": "user",
-                "parts": [{"text": prompt}]
-            }],
-            "generationConfig": {
-                "temperature": 0.0,
-                "topP": 0.95,
-            }
-        }
-
-        for attempt in range(max_retries):
-            try:
-                # Apply rate limiting from shared API instance
-                self.api._throttle()
-                self.api._rate_limit()
-
-                res = requests.post(url, json=payload, timeout=120)
-
-                if res.status_code != 200:
-                    logger.error(f"Text generation failed (attempt {attempt+1}): {res.text}")
-                    if attempt < max_retries - 1:
-                        time.sleep(5)
-                        continue
-                    return ""
-
-                data = res.json()
-                try:
-                    return data["candidates"][0]["content"]["parts"][0]["text"]
-                except (KeyError, IndexError):
-                    logger.error(f"Failed to extract text from response: {data}")
-                    return ""
-
-            except requests.exceptions.Timeout:
-                logger.warning(f"Timeout on attempt {attempt+1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    time.sleep(10)
-                    continue
-                return ""
-            except Exception as e:
-                logger.error(f"Error on attempt {attempt+1}: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(5)
-                    continue
-                return ""
-
-        return ""
+        # Goes through GeminiAPI so merges share the rate limiter and retry policy.
+        try:
+            return self.api.generate_text(prompt, model=self.model, temperature=0.0,
+                                          timeout=120, retries=max_retries)
+        except GeminiAPIError as exc:
+            logger.error(f"Merge text generation failed: {exc}")
+            return ""
 
 
-def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
+def transcribe_large(audio_path: Union[str, Path], api: Optional[GeminiAPI] = None,
+                     model: Optional[str] = None) -> Dict[str, Any]:
     """
     Transcribe an audio file, handling large files via chunking.
 
@@ -168,6 +129,10 @@ def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
 
     Args:
         audio_path: Path to the audio file
+        api: Configured GeminiAPI, e.g. with a shared RateLimiter; default builds one
+        model: One Gemini model for every request (short file, chunks, merges), so a
+            limiter configured for that model covers all of them. Default keeps the
+            previous models (transcribe() default; gemini-3.5-flash for chunks/merges).
 
     Returns:
         TranscriptionResult dict with keys:
@@ -196,7 +161,7 @@ def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
     # If under threshold, use standard transcription
     if duration < CHUNK_THRESHOLD:
         logger.info("File under threshold, using standard transcription")
-        return _standard_transcribe(str(path))
+        return _standard_transcribe(str(path), api=api, model=model)
 
     # Large file - need to chunk
     logger.info(f"File over {CHUNK_THRESHOLD}s threshold, chunking...")
@@ -205,8 +170,9 @@ def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
     chunks = split_audio(str(path), chunk_sec=1800, overlap_sec=10)
     logger.info(f"Created {len(chunks)} chunks")
 
-    # Create shared API instance for rate limiting
-    api = GeminiAPI()
+    # One client for every chunk and merge, so they share its rate limiting
+    api = api if api is not None else GeminiAPI()
+    chunk_model = model or GeminiModel.GEMINI_3_5_FLASH.value
 
     # Transcribe each chunk
     transcripts: List[Dict[str, Any]] = []
@@ -221,7 +187,7 @@ def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
         logger.info(f"Transcribing chunk {i+1}/{len(chunks)}: {chunk.start_time:.0f}s - {chunk.end_time:.0f}s")
 
         try:
-            result = _transcribe_chunk(chunk.path, api)
+            result = _transcribe_chunk(chunk.path, api, model=chunk_model)
 
             # A chunk-level [PARSE_ERROR] (e.g. Gemini PROHIBITED_CONTENT on one segment)
             # must be converted to [TRANSCRIPTION FAILED] here. Otherwise the merger
@@ -240,6 +206,10 @@ def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
             total_processing_time += result.get("processing_time", 0)
 
             logger.info(f"Chunk {i+1} transcribed: {len(result.get('text', ''))} chars")
+        except RateLimitError:
+            # A quota stop must not leave silent holes in a merged transcript.
+            cleanup_chunks(chunks)
+            raise
         except Exception as e:
             logger.error(f"Failed to transcribe chunk {i+1}: {e}")
             if first_chunk_exception is None:
@@ -276,8 +246,12 @@ def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
 
     # Merge transcripts
     logger.info("Merging transcripts...")
-    merge_api = ChunkedMergeAPI(api)
-    merged_text = merge_all_chunks(transcripts, merge_api)
+    merge_api = ChunkedMergeAPI(api, model=model or MERGE_MODEL)
+    try:
+        merged_text = merge_all_chunks(transcripts, merge_api)
+    except RateLimitError:
+        cleanup_chunks(chunks)
+        raise
 
     # Clean up temp chunk files
     cleanup_chunks(chunks)
@@ -289,7 +263,7 @@ def transcribe_large(audio_path: Union[str, Path]) -> Dict[str, Any]:
         "processing_time": total_processing_time,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
-        "model": GeminiModel.GEMINI_3_5_FLASH.value,
+        "model": chunk_model,
         "success": True,
         "chunks": len(chunks),
     }

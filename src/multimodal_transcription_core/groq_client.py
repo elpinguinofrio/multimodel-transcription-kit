@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional, Union
 
 import requests
 
+from .request_policy import send_with_limits
+
 logger = logging.getLogger("stt_api_groq")
 
 
@@ -38,10 +40,17 @@ class STTAPI:
 
     # ───────────────────────── init ──────────────────────────
 
-    def __init__(self, throttle_rate: float = 0.5, timeout: int = 40) -> None:
+    def __init__(self, throttle_rate: float = 0.5, timeout: int = 40, rate_limiter=None,
+                 max_retries: int = 4, retry_base_delay: float = 2.0,
+                 max_retry_delay: float = 60.0) -> None:
         self.api_key: str = self._get_api_key()
         self.throttle_rate = throttle_rate
         self.timeout = timeout
+        # Shared RateLimiter; when set it replaces the built-in throttle.
+        self.rate_limiter = rate_limiter
+        self.max_retries = max_retries
+        self.retry_base_delay = retry_base_delay
+        self.max_retry_delay = max_retry_delay
         self._last_call = 0.0
         logger.info("STTAPI initialized (throttle=%s, timeout=%s)", throttle_rate, timeout)
 
@@ -183,11 +192,11 @@ class STTAPI:
 
         logger.info("Audio duration: %.2f seconds, file size: %.2f MB", duration_sec, len(audio_bytes) / (1024 * 1024))
 
-        # rate‑limit
-        self._throttle()
+        # rate‑limit: shared limiter when given, otherwise the built-in spacing
+        if self.rate_limiter is None:
+            self._throttle()
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        files = {"file": (filename, io.BytesIO(audio_bytes), mime_type)}
         data = {
             "model": model.value,
             "response_format": response_format,
@@ -201,12 +210,17 @@ class STTAPI:
         logger.info("Sending request to Groq API (model=%s)", model.value)
         started = time.time()
         try:
-            res = requests.post(
-                self.API_URL,
-                headers=headers,
-                files=files,
-                data=data,
-                timeout=self.timeout,
+            res = send_with_limits(
+                # A fresh buffer per attempt: a retry must resend the whole file.
+                lambda: requests.post(
+                    self.API_URL,
+                    headers=headers,
+                    files={"file": (filename, io.BytesIO(audio_bytes), mime_type)},
+                    data=data,
+                    timeout=self.timeout,
+                ),
+                limiter=self.rate_limiter, key=model.value, max_retries=self.max_retries,
+                base_delay=self.retry_base_delay, max_delay=self.max_retry_delay,
             )
             if res.status_code != 200:
                 try:

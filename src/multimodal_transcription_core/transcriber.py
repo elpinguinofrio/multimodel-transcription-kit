@@ -9,6 +9,8 @@ import importlib.util
 from pathlib import Path
 from typing import Union
 
+from .rate_limiter import RateLimitError
+
 
 # Supported audio file extensions
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".wav", ".caf", ".mov", ".mp4", ".ogg"}
@@ -32,6 +34,7 @@ def transcribe(
     output_format: str = "default",
     model: str = None,
     temperature: float = 1.0,
+    api=None,
 ) -> dict:
     """
     Transcribe an audio file to text using Gemini API.
@@ -41,6 +44,7 @@ def transcribe(
         diarize: If True, identify and label different speakers.
         analyze: If True, extract full audio metadata (emotions, gender, background, etc.)
         output_format: Transcription style ('default', 'court', 'screenplay')
+        api: Configured GeminiAPI, e.g. with a shared RateLimiter; default builds one.
 
     Returns:
         TranscriptionResult dict with keys:
@@ -69,7 +73,7 @@ def transcribe(
 
     # Initialize API and transcribe
     try:
-        api = GeminiAPI()
+        api = api if api is not None else GeminiAPI()
         # Resolve model: param > default
         if model:
             gem_model = GeminiModel(model)
@@ -86,5 +90,7 @@ def transcribe(
             # language omitted for auto-detect
         )
         return result
+    except RateLimitError:
+        raise
     except Exception as e:
         raise RuntimeError(f"Transcription failed: {e}") from e

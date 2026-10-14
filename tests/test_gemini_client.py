@@ -11,6 +11,7 @@ import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 
@@ -79,12 +80,15 @@ class TestPostWithRetry:
         # First (and only) backoff should wait ~7s, honoring the header.
         assert sleep.call_args_list[0].args[0] >= 7.0
 
-    def test_exhausts_retries_and_returns_last_response(self):
+    def test_exhausted_429_raises_rate_limit_timeout(self):
+        # 0.2.0: an exhausted 429 raises instead of returning, so a chunked
+        # transcript can never merge around a rate-limited hole.
+        from multimodal_transcription_core.rate_limiter import RateLimitTimeout
         api = _api(max_retries=2, retry_base_delay=0.0)
         post = MagicMock(return_value=_resp(429))
         with patch("requests.post", post), patch("time.sleep"):
-            res = api._post_with_retry("http://x", {}, timeout=1, headers=None)
-        assert res.status_code == 429
+            with pytest.raises(RateLimitTimeout):
+                api._post_with_retry("http://x", {}, timeout=1, headers=None)
         # 1 initial attempt + 2 retries
         assert post.call_count == 3
 

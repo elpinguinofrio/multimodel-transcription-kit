@@ -1,0 +1,205 @@
+"""Every cli-runner flag from PRODUCT.md, exercised against a stubbed provider.
+
+BLIND SPOT: providers are stubbed here. Reachability probing and real transcript
+content are covered by the integration tests, not by this file.
+"""
+import textwrap
+
+import pytest
+
+from multimodal_transcription_core import runner
+
+
+CONFIG = """
+[secrets]
+env_file = {env_file}
+
+[defaults]
+language = ru
+
+[models]
+ranking = fast-cloud, slow-cloud, local-box
+
+[model.fast-cloud]
+kind = gemini
+
+[model.slow-cloud]
+kind = groq
+
+[model.local-box]
+kind = http
+endpoint = http://127.0.0.1:9/v1/audio/transcriptions
+"""
+
+
+@pytest.fixture
+def config_file(tmp_path):
+    env = tmp_path / "keys.env"
+    env.write_text("GEMINI_API_KEY=stub\n")
+    path = tmp_path / "transcription.ini"
+    path.write_text(textwrap.dedent(CONFIG).format(env_file=env))
+    return path
+
+
+@pytest.fixture
+def audio(tmp_path):
+    path = tmp_path / "my recording.m4a"
+    path.write_bytes(b"stub-audio")
+    return path
+
+
+@pytest.fixture
+def stub_provider(monkeypatch):
+    """Record which model was asked for; return a fixed transcript."""
+    calls = []
+
+    def fake_transcribe(model_name, options, audio_path, language, limiter=None):
+        calls.append({"model": model_name, "audio": audio_path, "language": language,
+                      "limiter": limiter})
+        return "стенограмма"
+
+    monkeypatch.setattr(runner, "transcribe_with_model", fake_transcribe)
+    return calls
+
+
+def reachable(monkeypatch, *names):
+    monkeypatch.setattr(runner, "is_reachable", lambda name, options: name in names)
+
+
+def test_no_destination_prints_transcript_to_stdout(capsys, config_file, audio, stub_provider, monkeypatch):
+    reachable(monkeypatch, "fast-cloud")
+    assert runner.main([str(audio), "--config", str(config_file)]) == 0
+    assert capsys.readouterr().out == "стенограмма\n"
+
+
+def test_destination_writes_named_markdown_with_source_header(config_file, audio, stub_provider, monkeypatch, tmp_path):
+    reachable(monkeypatch, "fast-cloud")
+    dest = tmp_path / "out"
+    dest.mkdir()
+    assert runner.main([str(audio), "-d", str(dest), "--config", str(config_file)]) == 0
+    written = dest / "my recording.fast-cloud.md"
+    assert written.is_file()
+    assert written.read_text(encoding="utf-8") == f"src: {audio}\n\nстенограмма\n"
+
+
+def test_repeat_runs_are_numbered_and_never_overwrite(config_file, audio, stub_provider, monkeypatch, tmp_path):
+    reachable(monkeypatch, "fast-cloud")
+    dest = tmp_path / "out"
+    dest.mkdir()
+    argv = [str(audio), "-d", str(dest), "--config", str(config_file)]
+    for _ in range(3):
+        assert runner.main(argv) == 0
+    assert sorted(p.name for p in dest.iterdir()) == [
+        "my recording.fast-cloud.(2).md",
+        "my recording.fast-cloud.(3).md",
+        "my recording.fast-cloud.md",
+    ]
+
+
+def test_model_flag_overrides_the_ranking(config_file, audio, stub_provider, monkeypatch):
+    reachable(monkeypatch, "fast-cloud", "slow-cloud")
+    assert runner.main([str(audio), "-m", "slow-cloud", "--config", str(config_file)]) == 0
+    assert stub_provider[0]["model"] == "slow-cloud"
+
+
+def test_default_model_is_the_first_reachable_in_ranking(config_file, audio, stub_provider, monkeypatch):
+    reachable(monkeypatch, "slow-cloud", "local-box")
+    assert runner.main([str(audio), "--config", str(config_file)]) == 0
+    assert stub_provider[0]["model"] == "slow-cloud"
+
+
+def test_language_flag_reaches_the_provider(config_file, audio, stub_provider, monkeypatch):
+    reachable(monkeypatch, "fast-cloud")
+    runner.main([str(audio), "--language", "en", "--config", str(config_file)])
+    assert stub_provider[0]["language"] == "en"
+
+
+def test_language_defaults_to_the_config_value(config_file, audio, stub_provider, monkeypatch):
+    reachable(monkeypatch, "fast-cloud")
+    runner.main([str(audio), "--config", str(config_file)])
+    assert stub_provider[0]["language"] == "ru"
+
+
+def test_unknown_model_is_rejected_before_any_provider_call(config_file, audio, stub_provider, monkeypatch, capsys):
+    reachable(monkeypatch, "fast-cloud")
+    with pytest.raises(SystemExit):
+        runner.main([str(audio), "-m", "no-such-model", "--config", str(config_file)])
+    assert stub_provider == []
+
+
+def test_unreachable_requested_model_fails_loudly(config_file, audio, stub_provider, monkeypatch):
+    reachable(monkeypatch)
+    with pytest.raises(SystemExit):
+        runner.main([str(audio), "-m", "fast-cloud", "--config", str(config_file)])
+    assert stub_provider == []
+
+
+def test_no_reachable_model_fails_loudly(config_file, audio, stub_provider, monkeypatch):
+    reachable(monkeypatch)
+    with pytest.raises(SystemExit):
+        runner.main([str(audio), "--config", str(config_file)])
+    assert stub_provider == []
+
+
+def test_missing_audio_fails_before_config_work(config_file, tmp_path, stub_provider, monkeypatch):
+    reachable(monkeypatch, "fast-cloud")
+    with pytest.raises(SystemExit):
+        runner.main([str(tmp_path / "absent.m4a"), "--config", str(config_file)])
+    assert stub_provider == []
+
+
+def test_missing_destination_directory_fails_loudly(config_file, audio, stub_provider, monkeypatch, tmp_path):
+    reachable(monkeypatch, "fast-cloud")
+    with pytest.raises(SystemExit):
+        runner.main([str(audio), "-d", str(tmp_path / "absent"), "--config", str(config_file)])
+
+
+def test_list_models_reports_reachability_without_transcribing(capsys, config_file, stub_provider, monkeypatch):
+    reachable(monkeypatch, "slow-cloud")
+    assert runner.main(["--list-models", "--config", str(config_file)]) == 0
+    out = capsys.readouterr().out
+    assert "fast-cloud" in out and "slow-cloud" in out and "local-box" in out
+    assert stub_provider == []
+
+
+def test_library_import_does_not_read_the_root_config(monkeypatch, tmp_path):
+    """The library stays pure: only the CLI layer touches transcription.ini."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "transcription.ini").write_text("[models]\nranking = poisoned\n")
+    import importlib
+
+    import multimodal_transcription_core
+
+    importlib.reload(multimodal_transcription_core)
+    assert not hasattr(multimodal_transcription_core, "ranking")
+
+
+LIMITED = CONFIG + """
+[limits]
+state_file = {state}
+"""
+
+
+@pytest.fixture
+def limited_config(tmp_path):
+    env = tmp_path / "keys.env"
+    env.write_text("GEMINI_API_KEY=stub\n")
+    path = tmp_path / "limited.ini"
+    text = textwrap.dedent(LIMITED).format(env_file=env, state=tmp_path / "state.sqlite")
+    text = text.replace("[model.fast-cloud]\nkind = gemini",
+                        "[model.fast-cloud]\nkind = gemini\nrpm = 15\nrpd = 500")
+    path.write_text(text)
+    return path
+
+
+def test_runner_passes_a_limiter_built_from_config(limited_config, audio, stub_provider, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    assert runner.main([str(audio), "--config", str(limited_config)]) == 0
+    limiter = stub_provider[0]["limiter"]
+    assert limiter.limits["fast-cloud"].rpd == 500
+
+
+def test_list_models_shows_daily_usage(capsys, limited_config, stub_provider, monkeypatch):
+    runner.main(["--list-models", "--config", str(limited_config)])
+    out = capsys.readouterr().out
+    assert "today 0/500" in out

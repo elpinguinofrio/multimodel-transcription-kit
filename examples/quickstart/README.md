@@ -31,13 +31,35 @@ groq-turbo whisper-large-v3-turbo          780     2.2  ok
 
 A provider that fails is reported in the table and the others still run.
 
+## Nothing is ever lost
+
+Every invocation writes to its own directory under `[output] dir` (default
+`./transcripts`, gitignored), named by UTC timestamp. Existing runs are never
+touched, and **failed attempts are recorded with their error text** - a
+transient 503 halfway through a long run stays on disk for analysis instead of
+vanishing with the terminal.
+
+```
+examples/quickstart/transcripts/         # gitignored, never committed
+├── runs.jsonl                           # append-only, one line per attempt, all runs
+└── 20260914T012647Z/
+    ├── run.json                         # manifest: audio sha256, per-provider result
+    ├── sample-120s-diary__parakeet-tdt-0.6b-v3.txt
+    └── ...
+```
+
+Each record carries `run_id`, `provider`, `model`, `endpoint`, `language`,
+`audio`, `audio_sha256`, `started_utc`, `seconds`, and either
+`chars`/`words`/`transcript` or `error_type`/`error`. The audio hash makes runs
+comparable across time even if a file is moved or renamed.
+
 ## config.ini
 
 | Section | Purpose |
 |---|---|
 | `[secrets]` | `env_file` — path to a `.env` with your keys. Never store keys in this repo. |
 | `[audio]` | `path` to the recording, `language` hint. The file is never copied. |
-| `[output]` | `dir` for transcripts. Gitignored. |
+| `[output]` | Parent `dir` for run directories, default `./transcripts`. Gitignored. |
 | `[provider.<name>]` | `enabled`, `kind` (`http`/`groq`/`gemini`), `model`, and `endpoint` for `http`. |
 
 Add a provider by adding a section — no code change for `http`, since any

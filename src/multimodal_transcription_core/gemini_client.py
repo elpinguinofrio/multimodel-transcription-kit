@@ -5,7 +5,6 @@ STT API service to handle speech-to-text conversion using Google Gemini.
 import io
 import logging
 import os
-import random
 import time
 from collections import deque
 from enum import Enum
@@ -14,6 +13,9 @@ from typing import Any, Dict, Optional, Union
 
 import requests
 import importlib.util
+
+from .rate_limiter import estimate_audio_tokens, estimate_text_tokens
+from .request_policy import send_with_limits
 
 logger = logging.getLogger("stt_api_gemini")
 
@@ -31,6 +33,7 @@ class GeminiModel(Enum):
     """
     GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview"
     GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite"
+    GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
     GEMINI_3_5_FLASH = "gemini-3.5-flash"
     # Legacy alias kept ONLY because old benchmark filenames reference it.
     # Do not use for new transcription work.
@@ -88,6 +91,7 @@ class GeminiAPI:
         max_retries: int = 4,
         retry_base_delay: float = 2.0,
         max_retry_delay: float = 60.0,
+        rate_limiter=None,
     ) -> None:
         """
         Initialize the Gemini API client.
@@ -96,6 +100,7 @@ class GeminiAPI:
             throttle_rate: Minimum time between API calls in seconds.
             timeout: Base API request timeout in seconds.
             requests_per_minute: Per-minute request cap.
+            rate_limiter: Shared RateLimiter; when set it replaces the built-in throttle.
         """
         # .env must load unconditionally first — a shell-exported GEMINI_API_KEY
         # would otherwise short-circuit loading and hide GEMINI_BASE_URL.
@@ -111,6 +116,7 @@ class GeminiAPI:
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.max_retry_delay = max_retry_delay
+        self.rate_limiter = rate_limiter
         self._last_call = 0.0
         # Track request timestamps for rate limiting (sliding window)
         self._request_timestamps: deque = deque()
@@ -176,21 +182,8 @@ class GeminiAPI:
         # Record this request timestamp
         self._request_timestamps.append(current_time)
 
-    def _retry_delay(self, attempt: int, retry_after: Optional[str]) -> float:
-        """Seconds to wait before the next attempt.
-
-        Honors a server-sent Retry-After (seconds) when present; otherwise
-        exponential backoff with jitter, capped at max_retry_delay.
-        """
-        if retry_after:
-            try:
-                return min(float(retry_after), self.max_retry_delay)
-            except (TypeError, ValueError):
-                pass
-        backoff = self.retry_base_delay * (2 ** attempt)
-        return min(backoff, self.max_retry_delay) + random.uniform(0, 0.5)
-
-    def _post_with_retry(self, url, payload, timeout, headers=None):
+    def _post_with_retry(self, url, payload, timeout, headers=None, limit_key=None, tokens=0,
+                         max_retries=None):
         """POST with bounded retry on transient failures.
 
         Retries on 429 / 5xx (see RETRYABLE_STATUS) and on connection-level
@@ -198,34 +191,15 @@ class GeminiAPI:
         Permanent 4xx are returned as-is for the caller to raise on. This is the
         single network exit for transcription — a transient 429 on one chunk of a
         long recording used to raise immediately and burn that segment into a hole.
+        With a rate_limiter, every attempt first waits for a free slot under
+        `limit_key` (the model name).
         """
-        attempt = 0
-        while True:
-            try:
-                res = requests.post(url, json=payload, timeout=timeout, headers=headers or None)
-            except requests.exceptions.RequestException as exc:
-                if attempt >= self.max_retries:
-                    raise
-                wait = self._retry_delay(attempt, None)
-                logger.warning(
-                    "Request error (attempt %d/%d): %s — retrying in %.1fs",
-                    attempt + 1, self.max_retries + 1, exc, wait,
-                )
-                time.sleep(wait)
-                attempt += 1
-                continue
-
-            if res.status_code in self.RETRYABLE_STATUS and attempt < self.max_retries:
-                wait = self._retry_delay(attempt, res.headers.get("Retry-After"))
-                logger.warning(
-                    "API %d (attempt %d/%d) — retrying in %.1fs",
-                    res.status_code, attempt + 1, self.max_retries + 1, wait,
-                )
-                time.sleep(wait)
-                attempt += 1
-                continue
-
-            return res
+        return send_with_limits(
+            lambda: requests.post(url, json=payload, timeout=timeout, headers=headers or None),
+            limiter=self.rate_limiter, key=limit_key or "gemini", tokens=tokens,
+            max_retries=self.max_retries if max_retries is None else max_retries,
+            base_delay=self.retry_base_delay, max_delay=self.max_retry_delay,
+        )
 
     @staticmethod
     def _encode_audio_base64(audio_bytes: bytes) -> str:
@@ -676,9 +650,10 @@ class GeminiAPI:
             }
         }
 
-        # Apply rate limiting (both per-request throttle and per-minute limit)
-        self._throttle()  # Minimum time between requests
-        self._rate_limit()  # Requests per minute limit
+        # Built-in spacing only when no shared limiter is managing this model.
+        if self.rate_limiter is None:
+            self._throttle()  # Minimum time between requests
+            self._rate_limit()  # Requests per minute limit
 
         # Calculate dynamic timeout based on audio duration
         # Base timeout + 30 seconds per minute of audio (free tier can be slow)
@@ -702,6 +677,8 @@ class GeminiAPI:
                 payload,
                 timeout=dynamic_timeout,
                 headers=request_headers or None,
+                limit_key=model_name,
+                tokens=estimate_audio_tokens(duration_sec),
             )
 
             if res.status_code != 200:
@@ -851,21 +828,16 @@ class GeminiAPI:
             "generationConfig": gen_config,
         }
 
-        attempt = 0
-        while True:
+        if self.rate_limiter is None:
             self._throttle()
             self._rate_limit()
-            try:
-                res = requests.post(request_url, json=payload, timeout=timeout or self.timeout)
-            except requests.exceptions.RequestException as exc:
-                raise GeminiAPIError(f"request failed: {exc}") from exc
-            # 429 = rate/quota; 5xx = transient proxy/upstream error — both retryable: back off and
-            # retry rather than fail the batch (a bulk warm shouldn't abort on one transient blip).
-            if (res.status_code == 429 or res.status_code >= 500) and attempt < retries:
-                attempt += 1
-                time.sleep(min(20, 2 ** attempt))
-                continue
-            break
+        # 429 and 5xx are retried with back-off rather than failing the batch.
+        try:
+            res = self._post_with_retry(request_url, payload, timeout=timeout or self.timeout,
+                                        limit_key=model_name, tokens=estimate_text_tokens(prompt),
+                                        max_retries=retries)
+        except requests.exceptions.RequestException as exc:
+            raise GeminiAPIError(f"request failed: {exc}") from exc
 
         if res.status_code != 200:
             try:

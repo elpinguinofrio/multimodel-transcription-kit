@@ -96,6 +96,11 @@ Output ONLY the combined text (the merged boundary region). No explanation, no p
     # Clean up LLM response (remove any surrounding quotes or whitespace)
     merged_boundary = merged_boundary.strip().strip('"\'')
 
+    # A failed merge must not drop words: keep both sides, overlap may repeat.
+    if not merged_boundary:
+        logger.warning("Boundary merge returned nothing; keeping both sides unmerged")
+        merged_boundary = f"{tail_a} {head_b}"
+
     # Stitch: prefix + merged_boundary + suffix
     result = prefix_a + merged_boundary + suffix_b
 
