@@ -145,6 +145,10 @@ def transcribe_large(audio_path: Union[str, Path], api: Optional[GeminiAPI] = No
         FileNotFoundError: If the audio file does not exist
         RuntimeError: If transcription fails
     """
+    from .gemini_live import LIVE_MODELS
+    model_name = model.value if isinstance(model, GeminiModel) else model
+    if model_name in LIVE_MODELS:
+        raise ValueError("Live models require transcribe_live; REST chunk merging is unsupported")
     path = Path(audio_path)
 
     # Validate file exists

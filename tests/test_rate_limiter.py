@@ -249,3 +249,40 @@ rpm = 1
 """)
     rl = RateLimiter.from_parser(parser, section_prefix="provider.")
     assert rl.limits == {"gemini-3-flash-preview": Limits(rpm=5, rpd=20)}
+
+
+def test_builtin_tier_ships_public_limits():
+    from multimodal_transcription_core.rate_limiter import load_tier
+    tier = load_tier("gemini-pro-tier")
+    assert tier["gemini-3.5-flash-lite"] == Limits(rpm=15, tpm=250_000, rpd=500)
+    assert tier["gemini-3-flash-preview"] == Limits(rpm=5, tpm=250_000, rpd=20)
+
+
+def test_unknown_tier_names_the_available_ones():
+    from multimodal_transcription_core.rate_limiter import load_tier
+    with pytest.raises(FileNotFoundError, match="gemini-pro-tier"):
+        load_tier("no-such-tier")
+
+
+def test_config_picks_a_tier_and_overrides_single_fields():
+    parser = configparser.ConfigParser()
+    parser.read_string("""
+[limits]
+tiers = gemini-pro-tier
+
+[model.flash-lite]
+kind = gemini
+model = gemini-3.5-flash-lite
+rpd = 300
+""")
+    rl = RateLimiter.from_parser(parser, state_path=None)
+    assert rl.limits["gemini-3.5-flash-lite"] == Limits(rpm=15, tpm=250_000, rpd=300)
+    assert rl.limits["gemini-3-flash-preview"].rpd == 20
+
+
+def test_tier_model_with_zero_limit_is_refused_clearly():
+    parser = configparser.ConfigParser()
+    parser.read_string("[limits]\ntiers = gemini-pro-tier\n")
+    rl = RateLimiter.from_parser(parser, state_path=None)
+    with pytest.raises(QuotaExhausted, match="limit is 0"):
+        rl.acquire("gemini-3.1-pro-preview")

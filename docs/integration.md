@@ -19,14 +19,19 @@ env_file = ~/.config/transcription/.env      # GEMINI_API_KEY=..., GROQ_API_KEY=
 state_file = ~/.local/state/transcription-core/ratelimit.sqlite
 max_wait_seconds = 3600                      # longest a request may wait for a slot
 
+tiers = gemini-pro-tier                      # public tier limits shipped with the package
+
 [model.gemini-3.5-flash-lite]
 kind = gemini
-rpm = 15                                     # values copied from AI Studio
-tpm = 250K                                   # "250K", "14.4K", "Unlimited" all parse
-rpd = 500
+# rpd = 250                                  # optional: this machine's share, overrides the tier
 ```
 
-The limiter only queues models that have `rpm`, `tpm` or `rpd` set.
+Public tier limits live in the package (`src/multimodal_transcription_core/tiers/gemini-pro-tier.ini`) and are the same for every account on that tier.
+Your config only names the tier and holds what is specific to one machine.
+`rpm`/`tpm`/`rpd` in a `[model.*]` section override the tier one field at a time. Values like `"250K"`, `"14.4K"` and `"Unlimited"` all parse.
+If Google changes the quotas, update the tier file and commit it.
+
+The limiter only queues models that have limits from a tier or the config.
 A model with no limits configured still gets 429 retries, but no proactive queuing.
 A limit of `0` (shown in AI Studio for models your tier doesn't include) stops requests with `QuotaExhausted`.
 
@@ -89,7 +94,7 @@ The VM and the host each have their own state file, so each can spend whatever l
 If both use the same API key:
 
 - **Simplest:** transcribe on one machine only.
-- **Or split every limit** between the two configs so the totals stay at the AI Studio values. For example, host `rpm 10 / tpm 170K / rpd 350` and VM `rpm 5 / tpm 80K / rpd 150`.
+- **Or split every limit** between the two configs so the totals stay at the tier values. For example, host `rpm 10 / tpm 170K / rpd 350` and VM `rpm 5 / tpm 80K / rpd 150`, set as overrides in each machine's `[model.*]` section.
 
 If they overlap anyway, the server's 429 is handled: it waits as long as the server asks, and a daily-quota 429 stops with `QuotaExhausted`.
 
@@ -99,7 +104,7 @@ If they overlap anyway, the server's 429 is handled: it waits as long as the ser
   The swap: replace the `_load_module(.../transcriber.py)` and `chunked_transcriber.py` loads in `engine/pipelines/voice/pipeline.py` with the imports above.
   Then pass `api=GeminiAPI(rate_limiter=limiter)`, catch `QuotaExhausted` to write a "retry after" sidecar, and only then delete the copy.
 - **Quickstart example** (`examples/quickstart/run.py`): builds one limiter with `RateLimiter.from_parser(cfg, section_prefix="provider.")`.
-  It reads `rpm`/`tpm`/`rpd` from each `[provider.*]` section and `[limits]` from its `config.ini`. Any other caller is protected only if it passes a `RateLimiter`.
+  It reads `[limits] tiers` and any `rpm`/`tpm`/`rpd` overrides in each `[provider.*]` section of its `config.ini`. Any other caller is protected only if it passes a `RateLimiter`.
 - **Clip Smith:** doesn't call the core today. Its transcription is local whisper plus `scripts/transcribe/correct_transcript_gemini.py`.
   Any new cloud transcription step should use the snippet above with the shared config, not a new Gemini client.
 

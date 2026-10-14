@@ -25,6 +25,8 @@ QUOTA_DAY_TZ = ZoneInfo("America/Los_Angeles")
 AUDIO_TOKENS_PER_SECOND = 32
 PROMPT_TOKEN_ALLOWANCE = 500
 WINDOW_SECONDS = 60.0
+# Public tier limit files shipped inside the package.
+TIERS_DIR = "tiers"
 # Seconds SQLite waits for another process's lock before acquire() re-checks its deadline.
 LOCK_TIMEOUT = 2.0
 # Brief lock collisions are not "waiting for a slot": even max_wait=0 tolerates this much.
@@ -97,6 +99,37 @@ def parse_count(value: Optional[str]) -> Optional[int]:
     return int(round(float(number) * scale))
 
 
+def _limits_from(options) -> Limits:
+    return Limits(parse_count(options.get("rpm")), parse_count(options.get("tpm")),
+                  parse_count(options.get("rpd")))
+
+
+def _overlay(base: Limits, override: Limits) -> Limits:
+    """Fields set in `override` win; unset fields keep the base value."""
+    return Limits(*(o if o is not None else b for b, o in
+                    zip((base.rpm, base.tpm, base.rpd), (override.rpm, override.tpm, override.rpd))))
+
+
+def load_tier(name: str) -> Dict[str, Limits]:
+    """Public per-tier limits: a tier shipped in tiers/<name>.ini, or an explicit .ini path.
+
+    Each section is an API model id with rpm / tpm / rpd.
+    """
+    from importlib import resources
+    tiers = resources.files(__package__).joinpath(TIERS_DIR)
+    builtin = tiers.joinpath(f"{name}.ini")
+    if builtin.is_file():
+        text = builtin.read_text(encoding="utf-8")
+    elif Path(name).expanduser().is_file():
+        text = Path(name).expanduser().read_text(encoding="utf-8")
+    else:
+        available = sorted(t.name[:-len(".ini")] for t in tiers.iterdir() if t.name.endswith(".ini"))
+        raise FileNotFoundError(f"Unknown limits tier {name!r}; built-in tiers: {', '.join(available)}")
+    parser = configparser.ConfigParser()
+    parser.read_string(text)
+    return {section: _limits_from(parser[section]) for section in parser.sections()}
+
+
 class RateLimiter:
     def __init__(self, limits: Dict[str, Limits], state_path=None, max_wait: float = 3600.0,
                  clock=time.time, sleep=time.sleep):
@@ -134,19 +167,24 @@ class RateLimiter:
     @classmethod
     def from_parser(cls, parser: configparser.ConfigParser, section_prefix: str = "model.",
                     **kwargs) -> "RateLimiter":
-        """[limits] state_file/max_wait_seconds and rpm/tpm/rpd in each [<prefix><name>].
+        """[limits] tiers/state_file/max_wait_seconds plus rpm/tpm/rpd in [<prefix><name>].
 
+        Public tier limits load first (`tiers = gemini-pro-tier, ...`); rpm/tpm/rpd
+        in a model section then override single fields, e.g. a host/VM split.
         The quota key is the section's `model` option, else the name after the prefix.
         """
         limits = {}
+        for tier in parser.get("limits", "tiers", fallback="").split(","):
+            if tier.strip():
+                limits.update(load_tier(tier.strip()))
         for section in parser.sections():
             if not section.startswith(section_prefix):
                 continue
             options = parser[section]
-            found = Limits(parse_count(options.get("rpm")), parse_count(options.get("tpm")),
-                           parse_count(options.get("rpd")))
+            found = _limits_from(options)
             if found != Limits():
-                limits[options.get("model", section[len(section_prefix):])] = found
+                key = options.get("model", section[len(section_prefix):])
+                limits[key] = _overlay(limits.get(key, Limits()), found)
         kwargs.setdefault("state_path", parser.get("limits", "state_file", fallback=None))
         kwargs.setdefault("max_wait", parser.getfloat("limits", "max_wait_seconds", fallback=3600.0))
         return cls(limits, **kwargs)

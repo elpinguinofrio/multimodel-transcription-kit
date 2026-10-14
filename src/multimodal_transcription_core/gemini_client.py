@@ -35,6 +35,9 @@ class GeminiModel(Enum):
     GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite"
     GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
     GEMINI_3_5_FLASH = "gemini-3.5-flash"
+    GEMINI_3_5_TRANSCRIBE = "gemini-3.5-transcribe"
+    GEMINI_3_5_TRANSCRIBE_LIVE = "gemini-3.5-transcribe-live"
+    GEMINI_3_8_LIVE = "gemini-3.8-live"
     # Legacy alias kept ONLY because old benchmark filenames reference it.
     # Do not use for new transcription work.
     GEMINI_PRO_VISION = "gemini-pro-vision"
@@ -419,6 +422,11 @@ class GeminiAPI:
     # Valid output formats for transcription style
     VALID_OUTPUT_FORMATS = {"default", "court", "screenplay"}
 
+    def transcribe_live(self, audio_path, model):
+        """Transcribe a recording over Live using this client's configuration."""
+        from .gemini_live import transcribe_live
+        return transcribe_live(audio_path, model, api=self)
+
     def speech_to_text(
         self,
         audio_input: Union[str, bytes],
@@ -462,6 +470,14 @@ class GeminiAPI:
             model_name = model.value
         else:
             model_name = str(model)
+
+        from .gemini_live import LIVE_MODELS
+        if model_name in LIVE_MODELS:
+            if diarize or analyze or output_format != "default" or language or prompt:
+                raise ValueError("Live models support plain transcription only; use transcribe_live")
+            if not isinstance(audio_input, (str, Path)):
+                raise ValueError("Live transcription requires an audio file path")
+            return self.transcribe_live(audio_input, model_name)
 
         # Handle audio conversion if needed
         temp_mp3_path = None
@@ -696,7 +712,15 @@ class GeminiAPI:
 
             # Extract text from the response
             try:
-                text = response_data["candidates"][0]["content"]["parts"][0]["text"]
+                parts = response_data["candidates"][0]["content"]["parts"]
+                texts = [
+                    part.get("text", part.get("audioTranscription", {}).get("text"))
+                    for part in parts if not part.get("thought")
+                ]
+                texts = [value for value in texts if isinstance(value, str)]
+                if not texts:
+                    raise KeyError("text or audioTranscription.text")
+                text = "".join(texts)
             except (KeyError, IndexError) as e:
                 # Log detailed response structure for debugging
                 import json
