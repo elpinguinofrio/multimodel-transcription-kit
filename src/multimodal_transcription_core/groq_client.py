@@ -56,12 +56,8 @@ class STTAPI:
 
     @staticmethod
     def _get_api_key() -> str:
-        from .config import load_env_file
-        load_env_file()
-        key = os.getenv("GROQ_API_KEY")
-        if not key:
-            raise STTAPIError("Set GROQ_API_KEY or an explicit TRANSCRIPTION_ENV_FILE")
-        return key
+        from .config import require_key
+        return require_key("GROQ_API_KEY", STTAPIError)
 
     # ───────────────────────── helpers ──────────────────────────
 

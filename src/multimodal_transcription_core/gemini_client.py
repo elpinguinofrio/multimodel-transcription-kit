@@ -136,11 +136,8 @@ class GeminiAPI:
 
     @staticmethod
     def _get_api_key() -> str:
-        GeminiAPI._load_env_files()
-        key = os.getenv("GEMINI_API_KEY")
-        if not key:
-            raise GeminiAPIError("Set GEMINI_API_KEY or an explicit TRANSCRIPTION_ENV_FILE")
-        return key
+        from .config import require_key
+        return require_key("GEMINI_API_KEY", GeminiAPIError)
 
     # ───────────────────────── helpers ──────────────────────────
 
