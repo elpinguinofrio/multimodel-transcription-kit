@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 DEFAULT_CONFIG_NAME = "transcription.ini"
+EXAMPLE_CONFIG_NAME = "transcription.example.ini"
 KEY_FOR_KIND = {"gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY"}
 
 
@@ -24,7 +25,7 @@ def load_config(explicit):
     """Read the CLI's config file; an explicit path must exist."""
     path = Path(explicit).expanduser() if explicit else Path.cwd() / DEFAULT_CONFIG_NAME
     if not path.is_file():
-        raise FileNotFoundError(f"No config at {path}. Copy {DEFAULT_CONFIG_NAME} and edit it.")
+        raise FileNotFoundError(f"No config at {path}. Copy {EXAMPLE_CONFIG_NAME} to {DEFAULT_CONFIG_NAME} and edit it.")
     parser = configparser.ConfigParser()
     parser.read(path, encoding="utf-8")
     return parser

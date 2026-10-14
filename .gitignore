@@ -14,6 +14,9 @@ build/
 /.private/
 /AGENTS.md
 
+# personal cli-runner config (copy transcription.example.ini)
+/transcription.ini
+
 # example app local state
 examples/quickstart/.env
 examples/quickstart/transcripts/

@@ -203,3 +203,18 @@ def test_list_models_shows_daily_usage(capsys, limited_config, stub_provider, mo
     runner.main(["--list-models", "--config", str(limited_config)])
     out = capsys.readouterr().out
     assert "today 0/500" in out
+
+
+def test_missing_config_points_at_the_committed_example(tmp_path, audio, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        runner.main([str(audio)])
+    assert "transcription.example.ini" in capsys.readouterr().err
+
+
+def test_committed_example_config_parses(capsys):
+    from pathlib import Path
+    from multimodal_transcription_core.rate_limiter import RateLimiter
+    example = Path(__file__).resolve().parents[1] / "transcription.example.ini"
+    limiter = RateLimiter.from_parser(runner.load_config(str(example)), state_path=None)
+    assert limiter.limits["gemini-3.5-flash-lite"].rpd == 500

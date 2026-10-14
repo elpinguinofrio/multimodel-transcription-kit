@@ -7,7 +7,7 @@ Every process on the same machine that names the same state file shares one queu
 ## 1. One config per machine
 
 Keep one file at `~/.config/transcription/transcription.ini` on each machine that transcribes.
-The repo's `transcription.ini` is a working example.
+Start from the repo's `transcription.example.ini`; a `transcription.ini` in the repo root is gitignored.
 The library never searches for this file. Your app passes its path explicitly.
 
 ```ini
