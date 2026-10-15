@@ -8,6 +8,7 @@ real transcription accuracy is not measured here.
 import hashlib
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -56,7 +57,8 @@ def test_enhancement_fixes_what_the_assessment_found(tmp_path, gain, noise_db):
     enhanced = audio_quality.enhance(audio, before)
     after = audio_quality.assess(enhanced["path"])
     assert after["problems"] == [] and enhanced["filters"]
-    assert enhanced["path"].parent == tmp_path and enhanced["path"].name.startswith("a.enhanced-")
+    assert enhanced["path"].parent == audio_quality.default_cache_dir()
+    assert enhanced["path"].name.startswith("a.enhanced-") and [p.name for p in tmp_path.iterdir()] == ["a.wav"]
 
 
 def fake_request(seen):
@@ -82,7 +84,23 @@ def test_problem_audio_is_enhanced_automatically_and_the_original_kept(tmp_path,
     assert result["audio"]["assessment"]["problems"] == ["quiet"]
     again = engine.transcribe_file(audio, SPEC, timestamps="none")
     assert again["audio"]["enhanced"]["reused"] is True
-    assert len(list(tmp_path.glob("talk.enhanced-*"))) == 1
+    assert len(list(audio_quality.default_cache_dir().glob("talk.enhanced-*"))) == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["talk.wav"]  # nothing written beside the source
+
+
+def test_enhanced_copy_goes_to_an_explicit_folder(tmp_path, monkeypatch):
+    audio = make(tmp_path / "talk.wav", 0.02)
+    monkeypatch.setattr(engine, "_request", fake_request([]))
+    result = engine.transcribe_file(audio, SPEC, timestamps="none", enhanced_dir=tmp_path / "cache")
+    assert result["audio"]["enhanced"]["path"].startswith(str(tmp_path / "cache") + "/")
+
+
+def test_default_cache_folder_is_xdg_cache_home_then_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    assert audio_quality.default_cache_dir() == tmp_path / "xdg" / "transcription-core" / "enhanced"
+    monkeypatch.delenv("XDG_CACHE_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert audio_quality.default_cache_dir() == tmp_path / ".cache" / "transcription-core" / "enhanced"
 
 
 def test_no_enhance_still_assesses_but_creates_nothing(tmp_path, monkeypatch):
@@ -133,3 +151,14 @@ def test_cli_enhance_flag(tmp_path, monkeypatch, flags, expected):
     monkeypatch.setattr(engine, "transcribe_file", lambda audio, spec, **kw: seen.update(kw) or {"text": "t"})
     assert runner.main([str(audio), "--config", str(config), *flags]) == 0
     assert seen.get("enhance") == expected
+
+
+def test_cli_config_names_the_enhanced_folder(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.touch()
+    config = tmp_path / "t.ini"
+    config.write_text("[defaults]\nenhanced_dir = ~/enhanced\n[models]\nranking = w\n[model.w]\nkind = groq\n")
+    seen = {}
+    monkeypatch.setattr(engine, "transcribe_file", lambda audio, spec, **kw: seen.update(kw) or {"text": "t"})
+    assert runner.main([str(audio), "--config", str(config)]) == 0
+    assert seen.get("enhanced_dir") == str(Path("~/enhanced").expanduser())

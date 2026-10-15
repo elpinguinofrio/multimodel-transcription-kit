@@ -5,10 +5,12 @@ the 95th and 10th percentiles of 50 ms window RMS (digital silence counts as
 very low); their difference estimates the signal-to-noise ratio. On synthetic
 speech-like bursts this estimate ran about 5 dB above the true SNR.
 
-enhance() writes `<stem>.enhanced-<id>.flac` beside the source: high-pass and
-FFT denoise when noisy, then EBU R128 loudness normalisation. The id hashes the
-source and the filter chain, so the same input reuses the same file; the
-original is never modified.
+enhance() writes `<stem>.enhanced-<id>.flac` into a cache folder, never beside
+the source: high-pass and FFT denoise when noisy, then EBU R128 loudness
+normalisation. The folder is the caller's cache_dir, else
+$XDG_CACHE_HOME/transcription-core/enhanced, else ~/.cache/transcription-core/enhanced.
+The id hashes the source and the filter chain, so the same input reuses the
+same file; the original is never modified.
 """
 
 import hashlib
@@ -97,8 +99,14 @@ def _render(source, target, chain):
         os.replace(partial, target)
 
 
-def enhance(source, assessment, *, force=False):
-    """Write the enhanced copy beside ``source`` (or reuse it); return its record.
+def default_cache_dir():
+    """Where enhanced copies go when the caller names no folder (resolved at call time)."""
+    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+    return Path(base) / "transcription-core" / "enhanced"
+
+
+def enhance(source, assessment, *, force=False, cache_dir=None):
+    """Write the enhanced copy into ``cache_dir`` (default: default_cache_dir()), or reuse it.
 
     force=True normalises loudness even when no problem was found.
     """
@@ -111,7 +119,9 @@ def enhance(source, assessment, *, force=False):
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
     digest.update(("|".join(chain) + "|16000|mono|flac").encode())
-    target = source.with_name(f"{source.stem}.enhanced-{digest.hexdigest()[:12]}.flac")
+    folder = Path(cache_dir).expanduser() if cache_dir else default_cache_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{source.stem}.enhanced-{digest.hexdigest()[:12]}.flac"
     reused = target.exists()
     if not reused:
         _render(source, target, chain)

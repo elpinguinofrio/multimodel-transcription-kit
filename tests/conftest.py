@@ -4,7 +4,9 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(monkeypatch):
+def isolated_environment(monkeypatch, tmp_path_factory):
+    # Enhanced audio copies go to the cache folder; never the developer's real ~/.cache.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("xdg-cache")))
     monkeypatch.setenv("GEMINI_API_KEY", "unit-test-key")
     monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
     monkeypatch.delenv("GEMINI_BASE_URL", raising=False)

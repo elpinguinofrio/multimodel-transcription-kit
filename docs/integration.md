@@ -146,8 +146,10 @@ Both apps must review these before upgrading; signatures are unchanged, behaviou
   falls back down the ranking; with `-m` it exits 1. Saved documents add `model:`, `features:`, `settings:`,
   `audio:`, `fallback:` and `warning:` lines after `src:`. Exit codes: 0 ok, 1 transcription failed,
   2 usage or configuration error.
-- **Enhancement is automatic** (owner decision): problem audio gets `<stem>.enhanced-<id>.flac` beside the
-  source, and that copy is transcribed. Pass `enhance=False` (`--no-enhance`) to keep apps' current behaviour.
+- **Enhancement is automatic** (owner decision): problem audio gets `<stem>.enhanced-<id>.flac` in a cache
+  folder, never beside the source (owner decision, 2026-10-15), and that copy is transcribed. The folder is
+  `transcribe_file(enhanced_dir=...)` / `[defaults] enhanced_dir`, else `$XDG_CACHE_HOME/transcription-core/enhanced`,
+  else `~/.cache/transcription-core/enhanced`. Pass `enhance=False` (`--no-enhance`) to keep apps' current behaviour.
 - `[defaults] prompt` in the CLI config applies to Gemini models only (Whisper prompts are context, not
   instructions); a model section's own `prompt` applies to that model.
 - **Gemini prompts are the whole instruction.** A `ModelSpec.prompt` / `transcribe_file(prompt=...)` for a

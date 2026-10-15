@@ -153,7 +153,7 @@ def build_parser():
                         help="Timestamps from provider alignment (default: major where supported)")
     parser.add_argument("--config", help=f"Config file; defaults to ./{DEFAULT_CONFIG_NAME}")
     parser.add_argument("--enhance", action=argparse.BooleanOptionalAction, default=None,
-                        help="Enhanced copy beside the source (default: automatic when loudness or "
+                        help="Enhanced copy in [defaults] enhanced_dir or ~/.cache (default: automatic when loudness or "
                              "noise is a problem; --no-enhance never, --enhance always)")
     parser.add_argument("--fuse", metavar="MODELS",
                         help="Comma-separated configured models, or 'all' for the ranking: run each on the "
@@ -172,6 +172,9 @@ def _settings(args, config):
     overlap = config.get("defaults", "overlap_seconds", fallback=None)
     if overlap:
         settings["overlap_seconds"] = float(overlap)
+    enhanced_dir = config.get("defaults", "enhanced_dir", fallback=None)
+    if enhanced_dir:
+        settings["enhanced_dir"] = str(Path(enhanced_dir).expanduser())
     return settings
 
 

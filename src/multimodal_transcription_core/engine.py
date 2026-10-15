@@ -304,7 +304,7 @@ def _failed(result):
 
 
 def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, temperature=None,
-                    speakers=None, sounds=None, timestamps=None, enhance=None,
+                    speakers=None, sounds=None, timestamps=None, enhance=None, enhanced_dir=None,
                     overlap_seconds=OVERLAP_SECONDS, limiter=None, usage_log=None,
                     retry_base_delay=2.0, max_retries=4, timeout=None, gemini_api=None, groq_api=None,
                     keep_raw=False):
@@ -316,9 +316,10 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
     UnsupportedFeatureError before any request.
 
     Loudness and noise are assessed on every run (nothing is modified). enhance=None
-    (default) writes an enhanced copy beside the source when a problem is found and
-    transcribes that; True always normalises; False never enhances. The original
-    is kept and result["audio"] records which file was transcribed.
+    (default) writes an enhanced copy into a cache folder (enhanced_dir, else
+    audio_quality.default_cache_dir(); never beside the source) when a problem is
+    found and transcribes that; True always normalises; False never enhances. The
+    original is kept and result["audio"] records which file was transcribed.
 
     keep_raw=True adds ``parts``:
     each request's exact parameters and raw provider response (for receipts).
@@ -353,7 +354,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
         warnings.append(f"loudness not assessed: {exc}")
     if assessment is not None and enhance is not False and (assessment["problems"] or enhance):
         try:
-            enhanced = enhance_audio(source, assessment, force=bool(enhance))
+            enhanced = enhance_audio(source, assessment, force=bool(enhance), cache_dir=enhanced_dir)
         except (OSError, AudioPreparationError) as exc:
             warnings.append(f"could not enhance the audio ({type(exc).__name__}: {exc}); "
                             f"transcribing the original")
