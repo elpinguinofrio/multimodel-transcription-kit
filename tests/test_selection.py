@@ -146,6 +146,75 @@ def test_verify_missing_key(monkeypatch):
     assert not result.ok and "GEMINI_API_KEY" in result.reason
 
 
+@contextmanager
+def http_models(status, body):
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            data = body if isinstance(body, bytes) else json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/v1/audio/transcriptions", seen
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def local(endpoint, model="parakeet-tdt-0.6b-v3"):
+    return ModelSpec(name="parakeet", kind="http", model=model, endpoint=endpoint)
+
+
+LISTED = {"data": [{"id": "parakeet-tdt-0.6b-v3", "installed": True},
+                   {"id": "gigaam-v3-e2e-rnnt", "installed": False}]}
+
+
+def test_verify_http_confirms_the_model_is_listed():
+    with http_models(200, LISTED) as (endpoint, seen):
+        result = selection.verify(local(endpoint))
+    assert result.ok and "verified" in result.reason
+    assert seen == ["/v1/models"]
+
+
+def test_verify_http_model_missing_from_the_list_is_unavailable():
+    with http_models(200, LISTED) as (endpoint, _):
+        result = selection.verify(local(endpoint, "parakeet-renamed"))
+    assert not result.ok
+    assert "not listed" in result.reason and "parakeet-tdt-0.6b-v3" in result.reason
+
+
+def test_verify_http_model_listed_but_not_installed_is_unavailable():
+    with http_models(200, LISTED) as (endpoint, _):
+        result = selection.verify(local(endpoint, "gigaam-v3-e2e-rnnt"))
+    assert not result.ok and "not installed" in result.reason
+
+
+@pytest.mark.parametrize("status,body,detail", [(404, b"not found", "HTTP 404"), (500, b"", "HTTP 500"),
+                                                (200, b"<html>", "not understood"),
+                                                (200, {"models": []}, "not understood")])
+def test_verify_http_without_a_model_list_stays_reachable_but_unverified(status, body, detail):
+    with http_models(status, body) as (endpoint, _):
+        result = selection.verify(local(endpoint))
+    assert result.ok and "unverified" in result.reason and detail in result.reason
+
+
+def test_verify_http_endpoint_not_answering():
+    with http_models(200, LISTED) as (endpoint, _):
+        pass
+    result = selection.verify(local(endpoint))
+    assert not result.ok and "not answering" in result.reason
+
+
 # ---------------------------------------------------------------- CLI
 
 CONFIG = """

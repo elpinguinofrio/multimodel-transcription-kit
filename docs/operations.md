@@ -12,7 +12,7 @@ needs a person. Check this list when something stops working after months untouc
 | `websockets` (`[live]` extra) | Gemini Live models only | `GeminiAPIError` naming the extra |
 | Gemini API (`GEMINI_API_KEY`, optional `GEMINI_BASE_URL`) | Gemini REST and Live, chunk merges, fusion | see recovery below |
 | Groq API (`GROQ_API_KEY`) | Whisper models | see recovery below |
-| Your OpenAI-compatible server | `kind = http` models | unreachable: skipped by automatic selection |
+| Your OpenAI-compatible server | `kind = http` models | unreachable: skipped by automatic selection; model missing from its `/v1/models` list: `--list-models` reports it unavailable |
 | Local disk for `[limits] state_file` and `[usage] file` | shared queue and request history | SQLite on SMB/NFS is unreliable; keep both local |
 
 ## Bounded retries (no human needed)
@@ -44,7 +44,9 @@ needs a person. Check this list when something stops working after months untouc
 | ffmpeg removed by an OS upgrade | `AudioPreparationError: ffmpeg is required` | reinstall ffmpeg |
 
 Run `transcription-core --list-models --config <config>` after any of these; it checks each model with a
-free metadata request (key accepted, model served) without transcribing anything.
+free metadata request (key accepted, model served) without transcribing anything. For `kind = http` it reads
+the server's `/v1/models` list: a listed model proves the server knows the name, not which model answered a
+given request. A server without that list is reported as answering but unverified.
 
 ## Release gate
 

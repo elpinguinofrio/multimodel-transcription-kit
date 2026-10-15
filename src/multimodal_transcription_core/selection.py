@@ -89,19 +89,12 @@ def verify(spec, *, timeout=10.0):
     """Ask the provider whether this key can use this model (free metadata request).
 
     Finds retired model names and rejected keys before a transcription fails.
-    HTTP endpoints are checked by connecting only. Never logs or returns the key.
+    HTTP endpoints are asked for their OpenAI-style model list (``/v1/models``
+    beside ``/v1/audio/transcriptions``). Never logs or returns the key.
     """
     from .config import load_env_file
     if spec.kind == "http":
-        import socket
-        from urllib.parse import urlparse
-        url = urlparse(spec.endpoint)
-        try:
-            socket.create_connection((url.hostname, url.port or (443 if url.scheme == "https" else 80)),
-                                     timeout=min(timeout, 3)).close()
-        except (OSError, TypeError) as exc:
-            return Availability(False, f"endpoint not answering ({type(exc).__name__})")
-        return Availability(True, "endpoint answering")
+        return _verify_http(spec, timeout)
     load_env_file()
     variable = spec.requires_env or KEY_FOR_KIND[spec.kind]
     key = os.environ.get(variable)
@@ -121,3 +114,34 @@ def verify(spec, *, timeout=10.0):
     if status in (400, 401, 403):
         return Availability(False, f"{variable} rejected (HTTP {status}: expired, revoked or no access?)")
     return Availability(True, f"unverified ({failure or f'HTTP {status}'}); will try at transcription time")
+
+
+def _verify_http(spec, timeout):
+    """A listed model proves the server knows the name, not which model answers a request."""
+    import socket
+    from urllib.parse import urlparse
+    import requests
+    url = urlparse(spec.endpoint)
+    try:
+        socket.create_connection((url.hostname, url.port or (443 if url.scheme == "https" else 80)),
+                                 timeout=min(timeout, 3)).close()
+    except (OSError, TypeError) as exc:
+        return Availability(False, f"endpoint not answering ({type(exc).__name__})")
+    head, separator, _ = spec.endpoint.partition("/audio/")
+    if not separator:
+        return Availability(True, "endpoint answering; model unverified (no model list beside this endpoint)")
+    try:
+        response = requests.get(f"{head}/models", timeout=timeout, allow_redirects=False)
+    except requests.RequestException as exc:
+        return Availability(True, f"endpoint answering; model unverified ({type(exc).__name__})")
+    if response.status_code != 200:
+        return Availability(True, f"endpoint answering; model unverified (HTTP {response.status_code})")
+    try:
+        listed = {item["id"]: item for item in response.json()["data"]}
+    except (ValueError, KeyError, TypeError):    # requests' JSONDecodeError is a ValueError
+        return Availability(True, "endpoint answering; model unverified (model list not understood)")
+    if spec.model not in listed:
+        return Availability(False, f"model {spec.model} not listed by the server (lists: {', '.join(listed) or 'none'})")
+    if listed[spec.model].get("installed") is False:
+        return Availability(False, f"model {spec.model} listed but not installed on the server")
+    return Availability(True, "verified: server lists the model")
