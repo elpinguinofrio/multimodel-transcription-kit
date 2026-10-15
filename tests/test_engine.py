@@ -126,6 +126,19 @@ def test_short_file_has_the_common_result_shape(tmp_path, point_clients_at, kind
     assert len([s for s in seen if s["transcription"]]) == 1
 
 
+def test_a_gemini_prompt_replaces_the_built_in_instructions(tmp_path, point_clients_at):
+    audio = tone(tmp_path / "a.wav", 2)
+    with gateway("gemini") as (url, seen):
+        point_clients_at(url)
+        engine.transcribe_file(audio, spec_for("gemini", url, prompt="Write a verbatim transcript."),
+                               language="ru", speakers=False, sounds=False, timestamps="none",
+                               limiter=core.RateLimiter({}))
+    body = json.loads(next(s for s in seen if s["transcription"])["body"])
+    text = next(p["text"] for p in body["contents"][0]["parts"] if "text" in p)
+    assert text.startswith("Write a verbatim transcript. ")
+    assert "Transcribe the following audio" not in text and "ru language" not in text
+
+
 @needs_ffmpeg
 @pytest.mark.parametrize("kind", ["gemini", "groq", "http"])
 def test_long_recording_is_chunked_and_reconstructed_for_every_kind(tmp_path, point_clients_at, kind):

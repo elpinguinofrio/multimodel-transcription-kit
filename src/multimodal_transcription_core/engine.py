@@ -243,8 +243,9 @@ def _request(spec, path, settings, clients):
         result.setdefault("request", {"model": spec.model, "transport": "live"})
         return result
     if spec.kind == "gemini":
+        # A configured Gemini prompt is the whole instruction, not an addition to the built-in one.
         return clients.gemini.speech_to_text(
-            str(path), model=spec.model, language=settings["language"], prompt=settings["prompt"],
+            str(path), model=spec.model, language=settings["language"], full_prompt=settings["prompt"],
             temperature=settings["temperature"], diarize=settings["features"]["speakers"],
             sounds=settings["features"]["sounds"], response_format="json" if settings["keep_raw"] else "text")
     if spec.kind == "groq":

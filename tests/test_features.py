@@ -92,6 +92,23 @@ def test_legacy_prompt_is_unchanged_without_the_new_argument(monkeypatch):
                              "Do not include timestamps or time markers. Output only the spoken words.")
 
 
+def test_full_prompt_is_sent_verbatim_with_no_language_sentence(monkeypatch):
+    prompt = prompt_sent(monkeypatch, full_prompt="Write a verbatim transcript.", language="ru")
+    assert prompt == "Write a verbatim transcript."
+
+
+def test_full_prompt_keeps_the_speaker_and_sound_switches(monkeypatch):
+    prompt = prompt_sent(monkeypatch, full_prompt="Write it.", diarize=True, sounds=True)
+    assert prompt.startswith("Write it. ") and "'Speaker 1:'" in prompt and "*dog barking*" in prompt
+    assert "Transcribe the following audio" not in prompt
+
+
+@pytest.mark.parametrize("extra", [{"prompt": "more"}, {"analyze": True}, {"output_format": "court"}])
+def test_full_prompt_rejects_options_that_write_their_own_text(monkeypatch, extra):
+    with pytest.raises(ValueError, match="full_prompt"):
+        prompt_sent(monkeypatch, full_prompt="Write it.", **extra)
+
+
 # ------------------------------------------------------------------ rendering
 
 SEGMENTS = [{"start": 0.0, "end": 2.0, "text": "Hello."}, {"start": 2.2, "end": 4.0, "text": "How are you?"},

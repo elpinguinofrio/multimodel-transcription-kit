@@ -260,14 +260,14 @@ def test_gemini_dispatch_passes_the_prompt(monkeypatch, audio):
         def __init__(self, **kwargs):
             pass
 
-        def speech_to_text(self, path, model=None, language=None, prompt=None, **kwargs):
-            calls.append(prompt)
+        def speech_to_text(self, path, model=None, language=None, prompt=None, full_prompt=None, **kwargs):
+            calls.append((prompt, full_prompt))
             return {"text": "ok", "no_speech": False}
 
     monkeypatch.setattr(gemini_client, "GeminiAPI", FakeGemini)
     result = runner.transcribe_with_model("m", {"kind": "gemini", "prompt": "VERBATIM"}, audio, "ru")
     assert result["text"] == "ok"
-    assert calls == ["VERBATIM"]
+    assert calls == [(None, "VERBATIM")]  # the configured prompt replaces the built-in one
 
 
 def test_defaults_prompt_is_not_sent_to_whisper_models(tmp_path):

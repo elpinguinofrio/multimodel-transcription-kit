@@ -150,6 +150,12 @@ Both apps must review these before upgrading; signatures are unchanged, behaviou
   source, and that copy is transcribed. Pass `enhance=False` (`--no-enhance`) to keep apps' current behaviour.
 - `[defaults] prompt` in the CLI config applies to Gemini models only (Whisper prompts are context, not
   instructions); a model section's own `prompt` applies to that model.
+- **Gemini prompts are the whole instruction.** A `ModelSpec.prompt` / `transcribe_file(prompt=...)` for a
+  Gemini model replaces the built-in "Transcribe the following audio..." text instead of being appended to it,
+  and "The audio is in <language> language." is no longer added (write the language into the prompt). Only
+  the speaker and sound sentences are still added when those features are on. Without a prompt, the built-in
+  text and the language sentence are unchanged. The low-level `GeminiAPI.speech_to_text(prompt=...)` still
+  appends; its new `full_prompt=` argument is what replaces.
 
 ## Migration notes: 0.1.0 → 0.2.0
 

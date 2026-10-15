@@ -84,6 +84,10 @@ SOUND_INSTRUCTIONS = {
     False: "Output only the spoken words; do not describe non-speech sounds. ",
 }
 
+# Speaker labelling sentence added to a caller's full_prompt when diarize=True.
+SPEAKER_INSTRUCTIONS = ("Identify different speakers and label them as 'Speaker 1:', 'Speaker 2:', etc. "
+                        "Format each speaker's turn on a new line with their label.")
+
 # A transcript is complete only when generation stopped normally. Some gateways omit the field.
 COMPLETE_FINISH_REASONS = {None, "STOP"}
 
@@ -504,6 +508,7 @@ class GeminiAPI:
         analyze: bool = False,
         output_format: str = "default",
         sounds: Optional[bool] = None,
+        full_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Transcribe audio to text using Gemini API.
@@ -522,6 +527,10 @@ class GeminiAPI:
             output_format: Transcription style ('default', 'court', 'screenplay')
             sounds: True writes non-speech sounds as *dog barking*; False asks for
                 spoken words only; None keeps the original prompt wording.
+            full_prompt: The whole instruction, sent as written in place of the
+                built-in text. Only the diarize and sounds sentences are added;
+                language is not (write it into the prompt). Cannot be combined
+                with prompt, analyze or a non-default output_format.
 
         Returns:
             Dictionary containing transcription and metadata
@@ -530,6 +539,9 @@ class GeminiAPI:
             raise ValueError(f"response_format must be one of {self.VALID_FORMATS}")
         if output_format not in self.VALID_OUTPUT_FORMATS:
             raise ValueError(f"output_format must be one of {self.VALID_OUTPUT_FORMATS}")
+        if full_prompt is not None and (prompt or analyze or output_format != "default"):
+            raise ValueError("full_prompt replaces the built-in text; do not combine it with "
+                             "prompt, analyze or output_format")
 
         # Get model name (handle both enum and string)
         if isinstance(model, GeminiModel):
@@ -539,7 +551,7 @@ class GeminiAPI:
 
         from .gemini_live import LIVE_MODELS
         if model_name in LIVE_MODELS:
-            if diarize or analyze or output_format != "default" or language or prompt:
+            if diarize or analyze or output_format != "default" or language or prompt or full_prompt:
                 raise ValueError("Live models support plain transcription only; use transcribe_live")
             if not isinstance(audio_input, (str, Path)):
                 raise ValueError("Live transcription requires an audio file path")
@@ -606,7 +618,11 @@ class GeminiAPI:
         audio_b64 = self._encode_audio_base64(audio_bytes)
 
         # Prepare prompt text based on output_format or mode flags
-        if output_format == "court":
+        if full_prompt is not None:
+            prompt_text = " ".join(part for part in (
+                full_prompt.strip(), SPEAKER_INSTRUCTIONS if diarize else "",
+                SOUND_INSTRUCTIONS.get(sounds, "").strip()) if part)
+        elif output_format == "court":
             prompt_text = (
                 f"Transcribe the following audio in COURT REPORTER format. "
                 f"Use this exact structure:\n\n"
@@ -697,7 +713,7 @@ class GeminiAPI:
                 f"Do NOT ask for the audio file. Do NOT converse. "
                 f"{prompt or ''}"
             )
-        if language:
+        if language and full_prompt is None:
             prompt_text += f" The audio is in {language} language."
 
         # Validate model is allowed (rejects pre-3.x families).

@@ -27,3 +27,6 @@ benchmark/samples/*/runs/
 benchmark/samples/*/human-transcription-reference.txt
 benchmark/samples/*/NOTES.md
 benchmark/samples/*/reference.local.json
+
+# enhanced copies the CLI writes beside a source recording (audio_quality.enhance)
+*.enhanced-*.flac
