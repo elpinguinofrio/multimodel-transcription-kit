@@ -26,7 +26,8 @@ the library's job; do not reimplement them.
 
 Pass only what the user asked for: `-m <model>` (exactly that model, no fallback),
 `--language xx`, `--no-speakers`, `--no-sounds`, `--timestamps none|major|phrase`,
-`--no-enhance`, `--receipt` (with `-d`), `--fuse a,b` (with `-d`, runs several models).
+`--no-enhance`, `--keep-enhanced`, `--prompt TEXT`, `--temperature T`, `--overlap-seconds S`,
+`--max-retries N`, `--timeout S`, `--receipt` (with `-d`), `--fuse a,b` (with `-d`, runs several models).
 
 ## Report
 

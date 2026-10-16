@@ -58,6 +58,7 @@ tests/conftest.py
 tests/test_api_key_errors.py
 tests/test_audio_converter.py
 tests/test_chunked_transcriber.py
+tests/test_cli_flags.py
 tests/test_cli_runner.py
 tests/test_engine.py
 tests/test_enhancement.py

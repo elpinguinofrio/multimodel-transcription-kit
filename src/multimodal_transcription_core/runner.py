@@ -151,6 +151,16 @@ def build_parser():
                         help="Non-speech sounds such as *dog barking* (default: on where supported)")
     parser.add_argument("--timestamps", choices=("none", "major", "phrase"), default=None,
                         help="Timestamps from provider alignment (default: major where supported)")
+    parser.add_argument("--prompt", help="Instruction for every model in this run; replaces [defaults] prompt "
+                                         "and the model's own (Gemini: the whole instruction; Whisper: context)")
+    parser.add_argument("--temperature", type=float,
+                        help="Sampling temperature, Gemini only (default: the model's config value, else 1.0)")
+    parser.add_argument("--overlap-seconds", type=float,
+                        help="Overlap between the parts of a long recording (default: [defaults] overlap_seconds, else 10)")
+    parser.add_argument("--max-retries", type=int,
+                        help="Retries after 429/5xx/connection errors per request (default: 4)")
+    parser.add_argument("--timeout", type=float,
+                        help="Seconds to wait for each provider request (default: 300; HTTP models 3600)")
     parser.add_argument("--config", help=f"Config file; defaults to ./{DEFAULT_CONFIG_NAME}")
     parser.add_argument("--enhance", action=argparse.BooleanOptionalAction, default=None,
                         help="Transcribe an enhanced temporary copy (default: automatic when loudness or noise "
@@ -170,9 +180,11 @@ def build_parser():
 
 def _settings(args, config):
     """Options shared by every model in this run, from flags and [defaults]."""
-    settings = {name: getattr(args, name) for name in ("speakers", "sounds", "timestamps", "enhance", "keep_enhanced")
+    settings = {name: getattr(args, name) for name in ("speakers", "sounds", "timestamps", "enhance", "keep_enhanced",
+                                                       "prompt", "temperature", "max_retries", "timeout")
                 if getattr(args, name) is not None}
-    overlap = config.get("defaults", "overlap_seconds", fallback=None)
+    overlap = args.overlap_seconds if args.overlap_seconds is not None \
+        else config.get("defaults", "overlap_seconds", fallback=None)
     if overlap:
         settings["overlap_seconds"] = float(overlap)
     enhanced_dir = config.get("defaults", "enhanced_dir", fallback=None)

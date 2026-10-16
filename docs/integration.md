@@ -142,7 +142,8 @@ Both apps must review these before upgrading; signatures are unchanged, behaviou
 - **Changed: chunk boundaries** are spread evenly, so no part exceeds `chunk_sec + overlap_sec` (the last
   part could reach 1.5x before). Starts stay on round numbers when the duration is a multiple of the chunk.
 - **CLI:** new flags `--speakers/--no-speakers`, `--sounds/--no-sounds`, `--timestamps none|major|phrase`,
-  `--enhance/--no-enhance`, `--fuse MODELS`, `--receipt`; `bench` subcommand. Without `-m` a failing model
+  `--enhance/--no-enhance`, `--keep-enhanced`, `--prompt`, `--temperature`, `--overlap-seconds`, `--max-retries`,
+  `--timeout` (each overrides its config value), `--fuse MODELS`, `--receipt`; `bench` subcommand. Without `-m` a failing model
   falls back down the ranking; with `-m` it exits 1. Saved documents add `model:`, `features:`, `settings:`,
   `audio:`, `fallback:` and `warning:` lines after `src:`. Exit codes: 0 ok, 1 transcription failed,
   2 usage or configuration error.
