@@ -5,12 +5,14 @@ the 95th and 10th percentiles of 50 ms window RMS (digital silence counts as
 very low); their difference estimates the signal-to-noise ratio. On synthetic
 speech-like bursts this estimate ran about 5 dB above the true SNR.
 
-enhance() writes `<stem>.enhanced-<id>.flac` into a cache folder, never beside
-the source: high-pass and FFT denoise when noisy, then EBU R128 loudness
-normalisation. The folder is the caller's cache_dir, else
-$XDG_CACHE_HOME/transcription-core/enhanced, else ~/.cache/transcription-core/enhanced.
-The id hashes the source and the filter chain, so the same input reuses the
-same file; the original is never modified.
+enhance() writes a 16-bit `<stem>.enhanced-<id>.flac` into the caller's cache_dir
+(the engine passes its per-run temporary folder unless the caller keeps copies),
+else $XDG_CACHE_HOME/transcription-core/enhanced, else ~/.cache/transcription-core/enhanced;
+never beside the source. Noisy audio gets a high-pass and FFT denoise. Loudness is
+normalised (EBU R128) when it is too quiet or too loud; audio that is loud only by
+its true peak is peak-limited at its own level instead. The id hashes the source
+and the filter chain, so the same input reuses the same file; the original is never
+modified.
 """
 
 import hashlib
@@ -30,6 +32,7 @@ NOISY_SNR_DB = 15.0         # estimated SNR below this: noisy (about 10 dB true 
 MIN_WINDOWS = 20            # under 1 s of audio the noise estimate is not attempted
 SILENCE_DB = -120.0
 TARGET = "loudnorm=I=-16:TP=-1.5:LRA=11"
+PEAK_LIMIT = ["aresample=16000", "alimiter=limit=0.79:level=0"]   # about -2 dBFS; level=0 keeps loudness
 DENOISE_STRENGTH_DB = 12
 _ANALYSIS = ("aresample=16000,aformat=channel_layouts=mono,asetnsamples=n=800,"
              "astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=RMS_level,"
@@ -83,13 +86,16 @@ def filters_for(assessment):
     if "noisy" in assessment["problems"]:
         floor = max(-80, min(-20, round(assessment["noise_level_db"])))
         chain += ["highpass=f=80", f"afftdn=nr={DENOISE_STRENGTH_DB}:nf={floor}"]
-    return chain + [TARGET]
+    integrated = assessment.get("integrated_lufs")
+    peak_only = ("loud" in assessment["problems"] and "quiet" not in assessment["problems"]
+                 and integrated is not None and integrated <= LOUD_LUFS)
+    return chain + (PEAK_LIMIT if peak_only else [TARGET])
 
 
 def _render(source, target, chain):
     partial = target.with_name(f".{target.name}.{uuid.uuid4().hex}.partial")
     run = _ffmpeg(["-v", "error", "-i", str(source), "-vn", "-af", ",".join(chain),
-                   "-ar", "16000", "-ac", "1", "-c:a", "flac", "-f", "flac", str(partial)])
+                   "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", "-c:a", "flac", "-f", "flac", str(partial)])
     if run.returncode:
         partial.unlink(missing_ok=True)
         raise AudioPreparationError(f"ffmpeg enhancement failed: {run.stderr.strip()[-300:]}")
@@ -118,7 +124,7 @@ def enhance(source, assessment, *, force=False, cache_dir=None):
     with open(source, "rb") as handle:
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
-    digest.update(("|".join(chain) + "|16000|mono|flac").encode())
+    digest.update(("|".join(chain) + "|16000|mono|s16|flac").encode())
     folder = Path(cache_dir).expanduser() if cache_dir else default_cache_dir()
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"{source.stem}.enhanced-{digest.hexdigest()[:12]}.flac"

@@ -305,7 +305,7 @@ def _failed(result):
 
 def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, temperature=None,
                     speakers=None, sounds=None, timestamps=None, enhance=None, enhanced_dir=None,
-                    overlap_seconds=OVERLAP_SECONDS, limiter=None, usage_log=None,
+                    keep_enhanced=False, overlap_seconds=OVERLAP_SECONDS, limiter=None, usage_log=None,
                     retry_base_delay=2.0, max_retries=4, timeout=None, gemini_api=None, groq_api=None,
                     keep_raw=False):
     """Transcribe one recording with one model; long recordings are split and rebuilt.
@@ -316,10 +316,12 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
     UnsupportedFeatureError before any request.
 
     Loudness and noise are assessed on every run (nothing is modified). enhance=None
-    (default) writes an enhanced copy into a cache folder (enhanced_dir, else
-    audio_quality.default_cache_dir(); never beside the source) when a problem is
-    found and transcribes that; True always normalises; False never enhances. The
-    original is kept and result["audio"] records which file was transcribed.
+    (default) transcribes an enhanced copy when a problem is found; True always
+    normalises; False never enhances. The copy is an intermediate in the run's
+    temporary folder, deleted with it (also on failure). keep_enhanced=True keeps it
+    in enhanced_dir, else audio_quality.default_cache_dir(); never beside the source.
+    The original is kept and result["audio"] records which file was transcribed,
+    with the copy's filters, sha256 and whether it was kept.
 
     keep_raw=True adds ``parts``:
     each request's exact parameters and raw provider response (for receipts).
@@ -352,15 +354,16 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
         assessment = assess_audio(source)
     except AudioPreparationError as exc:
         warnings.append(f"loudness not assessed: {exc}")
-    if assessment is not None and enhance is not False and (assessment["problems"] or enhance):
-        try:
-            enhanced = enhance_audio(source, assessment, force=bool(enhance), cache_dir=enhanced_dir)
-        except (OSError, AudioPreparationError) as exc:
-            warnings.append(f"could not enhance the audio ({type(exc).__name__}: {exc}); "
-                            f"transcribing the original")
-    audio_path = enhanced["path"] if enhanced else source
     work = Path(tempfile.mkdtemp(prefix="transcription-core-"))
     try:
+        if assessment is not None and enhance is not False and (assessment["problems"] or enhance):
+            try:
+                enhanced = enhance_audio(source, assessment, force=bool(enhance),
+                                         cache_dir=(enhanced_dir if keep_enhanced else work))
+            except (OSError, AudioPreparationError) as exc:
+                warnings.append(f"could not enhance the audio ({type(exc).__name__}: {exc}); "
+                                f"transcribing the original")
+        audio_path = enhanced["path"] if enhanced else source
         source_duration = get_duration(str(audio_path))
         prepared, converted = _prepare(audio_path, spec, work, source_duration)
         duration = get_duration(str(prepared)) if converted else source_duration
@@ -441,7 +444,8 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
             "settings": {k: v for k, v in settings.items() if k not in ("features", "keep_raw")},
             "client": client_info(),
             "audio": {"source": str(source.resolve()), "sha256": _sha256(source), "assessment": assessment,
-                      "enhanced": None if not enhanced else {**enhanced, "path": str(enhanced["path"])},
+                      "enhanced": None if not enhanced else {**enhanced, "path": str(enhanced["path"]),
+                                                            "kept": bool(keep_enhanced)},
                       "transcribed": str(Path(audio_path).resolve()), "converted": converted},
         }
         if keep_raw:

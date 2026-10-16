@@ -1,13 +1,16 @@
-"""Loudness/noise assessment on every run; automatic enhancement into a separate file.
+"""Loudness/noise assessment on every run; automatic enhancement into a temporary file.
 
 Owner decision (2026-10-14): enhancement is fully automatic when the assessment
-finds a problem; --no-enhance (enhance=False) disables it. Signals are synthetic
+finds a problem; --no-enhance (enhance=False) disables it. Owner decision
+(2026-10-16): the enhanced copy is an intermediate, deleted after the run unless
+the caller asks to keep it (keep_enhanced=True / --keep-enhanced). Signals are synthetic
 speech-like tone bursts made with ffmpeg. BLIND SPOT: the effect of enhancement on
 real transcription accuracy is not measured here.
 """
 import hashlib
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,8 @@ from multimodal_transcription_core.engine import ModelSpec
 pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires ffmpeg")
 
 BURSTS = "sine=f=300:d=10,volume='if(lt(mod(t,1),0.6),1,0)':eval=frame"
+# Moderate speech-like bursts with one 10 ms spike near full scale: loud only by true peak.
+PEAKY = "aevalsrc='0.06*sin(2*PI*300*t)*lt(mod(t,1),0.6)+0.95*sin(2*PI*1000*t)*between(t,5,5.01)':d=10:s=16000"
 
 
 def make(path, gain=2.0, noise_db=None):
@@ -71,28 +76,94 @@ def fake_request(seen):
 SPEC = ModelSpec(name="p", kind="http", model="parakeet", endpoint="http://127.0.0.1:9/v1")
 
 
-def test_problem_audio_is_enhanced_automatically_and_the_original_kept(tmp_path, monkeypatch):
-    audio = make(tmp_path / "talk.wav", 0.02)
+@pytest.fixture
+def places(tmp_path, monkeypatch):
+    """Every folder a run could write to, all under tmp_path: source, cache, home and temp."""
+    folders = {name: tmp_path / name for name in ("src", "xdg", "home", "tmp")}
+    for folder in folders.values():
+        folder.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(folders["xdg"]))
+    monkeypatch.setenv("HOME", str(folders["home"]))
+    monkeypatch.setattr(tempfile, "tempdir", str(folders["tmp"]))
+    return folders
+
+
+def files_left(folders):
+    root = folders["src"].parent
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+
+
+def test_problem_audio_is_enhanced_transcribed_and_then_deleted(places, monkeypatch):
+    audio = make(places["src"] / "talk.wav", 0.02)
     before = sha(audio)
     seen = []
-    monkeypatch.setattr(engine, "_request", fake_request(seen))
+
+    def request(spec, path, settings, clients):
+        seen.append((path, path.is_file()))
+        return {"text": "hello", "no_speech": False}
+    monkeypatch.setattr(engine, "_request", request)
     result = engine.transcribe_file(audio, SPEC, timestamps="none")
     enhanced = result["audio"]["enhanced"]
-    assert sha(audio) == before
-    assert enhanced and seen[0].name == enhanced["path"].rsplit("/", 1)[-1]
+    assert sha(audio) == before and result["audio"]["assessment"]["problems"] == ["quiet"]
+    assert seen[0] == (Path(enhanced["path"]), True)       # the copy existed while it was transcribed
     assert result["audio"]["transcribed"] == enhanced["path"]
-    assert result["audio"]["assessment"]["problems"] == ["quiet"]
-    again = engine.transcribe_file(audio, SPEC, timestamps="none")
+    assert enhanced["kept"] is False and enhanced["sha256"] and enhanced["filters"]
+    assert files_left(places) == ["src/talk.wav"]           # nothing left anywhere after the run
+
+
+def test_enhanced_copy_is_deleted_when_the_run_fails(places, monkeypatch):
+    audio = make(places["src"] / "talk.wav", 0.02)
+
+    def fail(spec, path, settings, clients):
+        raise engine.UnsupportedFeatureError("provider refused")
+    monkeypatch.setattr(engine, "_request", fail)
+    with pytest.raises(engine.UnsupportedFeatureError):
+        engine.transcribe_file(audio, SPEC, timestamps="none")
+    assert files_left(places) == ["src/talk.wav"]
+
+
+def test_keep_enhanced_keeps_the_copy_in_the_named_folder(places, monkeypatch):
+    audio = make(places["src"] / "talk.wav", 0.02)
+    monkeypatch.setattr(engine, "_request", fake_request([]))
+    result = engine.transcribe_file(audio, SPEC, timestamps="none", keep_enhanced=True,
+                                    enhanced_dir=places["home"] / "kept")
+    enhanced = result["audio"]["enhanced"]
+    assert enhanced["kept"] is True and Path(enhanced["path"]).parent == places["home"] / "kept"
+    assert files_left(places) == ["home/kept/" + Path(enhanced["path"]).name, "src/talk.wav"]
+
+
+def test_kept_copies_default_to_the_cache_folder_and_are_reused(places, monkeypatch):
+    audio = make(places["src"] / "talk.wav", 0.02)
+    monkeypatch.setattr(engine, "_request", fake_request([]))
+    first = engine.transcribe_file(audio, SPEC, timestamps="none", keep_enhanced=True)
+    again = engine.transcribe_file(audio, SPEC, timestamps="none", keep_enhanced=True)
+    assert Path(first["audio"]["enhanced"]["path"]).parent == audio_quality.default_cache_dir()
     assert again["audio"]["enhanced"]["reused"] is True
     assert len(list(audio_quality.default_cache_dir().glob("talk.enhanced-*"))) == 1
-    assert [p.name for p in tmp_path.iterdir()] == ["talk.wav"]  # nothing written beside the source
 
 
-def test_enhanced_copy_goes_to_an_explicit_folder(tmp_path, monkeypatch):
-    audio = make(tmp_path / "talk.wav", 0.02)
+def test_enhanced_dir_alone_does_not_keep_the_copy(places, monkeypatch):
+    audio = make(places["src"] / "talk.wav", 0.02)
     monkeypatch.setattr(engine, "_request", fake_request([]))
-    result = engine.transcribe_file(audio, SPEC, timestamps="none", enhanced_dir=tmp_path / "cache")
-    assert result["audio"]["enhanced"]["path"].startswith(str(tmp_path / "cache") + "/")
+    result = engine.transcribe_file(audio, SPEC, timestamps="none", enhanced_dir=places["home"] / "kept")
+    assert result["audio"]["enhanced"]["kept"] is False and files_left(places) == ["src/talk.wav"]
+
+
+def test_enhanced_copy_is_16_bit(tmp_path):
+    audio = make(tmp_path / "a.wav", 0.02)
+    enhanced = audio_quality.enhance(audio, audio_quality.assess(audio), cache_dir=tmp_path / "c")
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=sample_fmt", "-of",
+                            "default=nw=1", str(enhanced["path"])], capture_output=True, text=True, check=True)
+    assert probe.stdout.strip() == "sample_fmt=s16"
+
+
+def test_loud_peaks_alone_are_limited_not_made_louder(tmp_path):
+    audio = tmp_path / "peaky.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", PEAKY, "-ac", "1", "-y", str(audio)], check=True)
+    before = audio_quality.assess(audio)
+    assert before["problems"] == ["loud"] and before["integrated_lufs"] < audio_quality.LOUD_LUFS
+    after = audio_quality.assess(audio_quality.enhance(audio, before, cache_dir=tmp_path / "c")["path"])
+    assert after["problems"] == [] and abs(after["integrated_lufs"] - before["integrated_lufs"]) < 2
 
 
 def test_default_cache_folder_is_xdg_cache_home_then_home(tmp_path, monkeypatch):
@@ -151,6 +222,18 @@ def test_cli_enhance_flag(tmp_path, monkeypatch, flags, expected):
     monkeypatch.setattr(engine, "transcribe_file", lambda audio, spec, **kw: seen.update(kw) or {"text": "t"})
     assert runner.main([str(audio), "--config", str(config), *flags]) == 0
     assert seen.get("enhance") == expected
+
+
+@pytest.mark.parametrize("flags,expected", [([], None), (["--keep-enhanced"], True)])
+def test_cli_keep_enhanced_flag(tmp_path, monkeypatch, flags, expected):
+    audio = tmp_path / "a.wav"
+    audio.touch()
+    config = tmp_path / "t.ini"
+    config.write_text("[models]\nranking = w\n[model.w]\nkind = groq\n")
+    seen = {}
+    monkeypatch.setattr(engine, "transcribe_file", lambda audio, spec, **kw: seen.update(kw) or {"text": "t"})
+    assert runner.main([str(audio), "--config", str(config), *flags]) == 0
+    assert seen.get("keep_enhanced") == expected
 
 
 def test_cli_config_names_the_enhanced_folder(tmp_path, monkeypatch):

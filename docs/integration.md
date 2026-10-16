@@ -146,10 +146,14 @@ Both apps must review these before upgrading; signatures are unchanged, behaviou
   falls back down the ranking; with `-m` it exits 1. Saved documents add `model:`, `features:`, `settings:`,
   `audio:`, `fallback:` and `warning:` lines after `src:`. Exit codes: 0 ok, 1 transcription failed,
   2 usage or configuration error.
-- **Enhancement is automatic** (owner decision): problem audio gets `<stem>.enhanced-<id>.flac` in a cache
-  folder, never beside the source (owner decision, 2026-10-15), and that copy is transcribed. The folder is
-  `transcribe_file(enhanced_dir=...)` / `[defaults] enhanced_dir`, else `$XDG_CACHE_HOME/transcription-core/enhanced`,
-  else `~/.cache/transcription-core/enhanced`. Pass `enhance=False` (`--no-enhance`) to keep apps' current behaviour.
+- **Enhancement is automatic** (owner decision): problem audio gets a 16-bit `<stem>.enhanced-<id>.flac`
+  in the run's temporary folder, and that copy is transcribed and then deleted, also when the run fails
+  (owner decision, 2026-10-16). `result["audio"]["enhanced"]` keeps its filters, `sha256` and `kept`.
+  `transcribe_file(keep_enhanced=True)` / `--keep-enhanced` keeps it in `enhanced_dir=` / `[defaults] enhanced_dir`,
+  else `$XDG_CACHE_HOME/transcription-core/enhanced`, else `~/.cache/transcription-core/enhanced`; never beside
+  the source. `enhanced_dir` alone no longer keeps copies. Audio that is loud only by its true peak is
+  peak-limited at its own level instead of normalised to -16 LUFS. Pass `enhance=False` (`--no-enhance`) to
+  keep apps' current behaviour.
 - `[defaults] prompt` in the CLI config applies to Gemini models only (Whisper prompts are context, not
   instructions); a model section's own `prompt` applies to that model.
 - **Gemini prompts are the whole instruction.** A `ModelSpec.prompt` / `transcribe_file(prompt=...)` for a

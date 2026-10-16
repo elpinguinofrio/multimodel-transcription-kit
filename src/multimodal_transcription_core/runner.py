@@ -153,8 +153,11 @@ def build_parser():
                         help="Timestamps from provider alignment (default: major where supported)")
     parser.add_argument("--config", help=f"Config file; defaults to ./{DEFAULT_CONFIG_NAME}")
     parser.add_argument("--enhance", action=argparse.BooleanOptionalAction, default=None,
-                        help="Enhanced copy in [defaults] enhanced_dir or ~/.cache (default: automatic when loudness or "
-                             "noise is a problem; --no-enhance never, --enhance always)")
+                        help="Transcribe an enhanced temporary copy (default: automatic when loudness or noise "
+                             "is a problem; --no-enhance never, --enhance always)")
+    parser.add_argument("--keep-enhanced", action="store_true", default=None,
+                        help="Keep the enhanced copy in [defaults] enhanced_dir, else ~/.cache/transcription-core/"
+                             "enhanced (default: deleted after the run)")
     parser.add_argument("--fuse", metavar="MODELS",
                         help="Comma-separated configured models, or 'all' for the ranking: run each on the "
                              "same audio, keep every transcript, and combine them (needs -d)")
@@ -167,7 +170,7 @@ def build_parser():
 
 def _settings(args, config):
     """Options shared by every model in this run, from flags and [defaults]."""
-    settings = {name: getattr(args, name) for name in ("speakers", "sounds", "timestamps", "enhance")
+    settings = {name: getattr(args, name) for name in ("speakers", "sounds", "timestamps", "enhance", "keep_enhanced")
                 if getattr(args, name) is not None}
     overlap = config.get("defaults", "overlap_seconds", fallback=None)
     if overlap:

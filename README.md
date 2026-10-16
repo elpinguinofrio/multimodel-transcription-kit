@@ -58,8 +58,9 @@ print(result["text"], result["features"], result["warnings"])
 ```
 
 Defaults on both: speaker labels and `*sound*` descriptions on, `major` timestamps
-from provider alignment, automatic loudness/noise enhancement into a separate file,
-long recordings split with overlap and rebuilt without duplicated boundary speech.
+from provider alignment, automatic loudness/noise enhancement into a temporary
+copy (deleted after the run unless `--keep-enhanced`), long recordings split with
+overlap and rebuilt without duplicated boundary speech.
 A feature a model cannot supply is dropped with a warning; one you ask for
 explicitly raises `UnsupportedFeatureError`. Failures raise typed errors
 (`TranscriptionError` subclasses); silence is reported as `no_speech`.
