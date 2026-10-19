@@ -39,8 +39,7 @@ def repo(tmp_path):
         "duration_seconds": 3.0}]}))
     (root / "README.md").write_text("hello\n")
     (root / ".gitignore").write_text("runs/\n")
-    files = [".gitignore", "PUBLIC_FILES.txt", "README.md", "benchmark/manifest.json", "benchmark/samples/s/s.wav"]
-    (root / "PUBLIC_FILES.txt").write_text("# published files\n" + "\n".join(files) + "\n")
+    files = [".gitignore", "README.md", "benchmark/manifest.json", "benchmark/samples/s/s.wav"]
     git(root, "init", "-q")
     git(root, "add", *files)
     return root
@@ -59,32 +58,30 @@ def test_an_ignored_local_fixture_of_a_checked_type_does_not_matter(repo):
     local.parent.mkdir()
     local.write_bytes(b"private recording")
     assert run(repo) == 0
-    assert "runs/private.wav" not in (repo / "PUBLIC_FILES.txt").read_text()
+    assert subprocess.check_output(["git", "-C", str(repo), "ls-files", "runs/"]) == b""
 
 
-def test_a_tracked_file_missing_from_the_allowlist_fails(repo, capsys):
+def test_a_new_tracked_source_file_needs_no_separate_inventory(repo):
     (repo / "notes.txt").write_text("x")
     git(repo, "add", "notes.txt")
-    assert run(repo) == 1
-    assert "notes.txt" in capsys.readouterr().out
+    assert run(repo) == 0
 
 
-def test_an_allowlisted_file_that_is_not_staged_fails(repo, capsys):
-    (repo / "PUBLIC_FILES.txt").write_text((repo / "PUBLIC_FILES.txt").read_text() + "new.py\n")
-    assert run(repo) == 1
-    assert "new.py" in capsys.readouterr().out
+def test_untracked_source_files_are_not_part_of_the_release(repo):
+    (repo / "new.py").write_text("token = '" + "gsk_" + "x" * 24 + "'\n")
+    assert run(repo) == 0
 
 
 def test_changed_benchmark_audio_fails(repo, capsys):
     (repo / "benchmark" / "samples" / "s" / "s.wav").write_bytes(b"RIFF changed")
+    git(repo, "add", "benchmark/samples/s/s.wav")
     assert run(repo) == 1
     assert "sha256" in capsys.readouterr().out
 
 
 def test_unlisted_audio_fails(repo, capsys):
     (repo / "extra.m4a").write_bytes(b"audio")
-    (repo / "PUBLIC_FILES.txt").write_text((repo / "PUBLIC_FILES.txt").read_text() + "extra.m4a\n")
-    git(repo, "add", "extra.m4a", "PUBLIC_FILES.txt")
+    git(repo, "add", "extra.m4a")
     assert run(repo) == 1
     assert "extra.m4a" in capsys.readouterr().out
 
@@ -95,8 +92,7 @@ def test_private_files_are_refused(repo, capsys, name):
     path = repo / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("x")
-    (repo / "PUBLIC_FILES.txt").write_text((repo / "PUBLIC_FILES.txt").read_text() + name + "\n")
-    git(repo, "add", "-f", name, "PUBLIC_FILES.txt")
+    git(repo, "add", "-f", name)
     assert run(repo) == 1
     assert "private" in capsys.readouterr().out
 
@@ -106,3 +102,41 @@ def test_credentials_in_published_text_fail(repo, capsys):
     git(repo, "add", "README.md")
     assert run(repo) == 1
     assert "README.md" in capsys.readouterr().out
+
+
+def test_staged_credentials_cannot_be_hidden_by_a_clean_working_copy(repo, capsys):
+    (repo / "README.md").write_text("key = AIza" + "B" * 35 + "\n")
+    git(repo, "add", "README.md")
+    (repo / "README.md").write_text("safe working copy\n")
+    assert run(repo) == 1
+    assert "README.md" in capsys.readouterr().out
+
+
+def test_staged_unapproved_audio_cannot_be_hidden_by_restoring_the_working_copy(repo, capsys):
+    sample = repo / "benchmark" / "samples" / "s" / "s.wav"
+    original = sample.read_bytes()
+    sample.write_bytes(b"private recording")
+    git(repo, "add", str(sample.relative_to(repo)))
+    sample.write_bytes(original)
+    assert run(repo) == 1
+    assert "s.wav" in capsys.readouterr().out
+
+
+def test_unstaged_private_edits_do_not_change_the_staged_release(repo):
+    (repo / "README.md").write_text("key = AIza" + "B" * 35 + "\n")
+    (repo / "benchmark/samples/s/s.wav").write_bytes(b"local recording")
+    (repo / "benchmark/manifest.json").write_text("invalid local draft")
+    assert run(repo) == 0
+
+
+def test_staged_release_can_be_checked_without_working_files(repo):
+    (repo / "README.md").unlink()
+    (repo / "benchmark/samples/s/s.wav").unlink()
+    (repo / "benchmark/manifest.json").unlink()
+    assert run(repo) == 0
+
+
+def test_missing_staged_benchmark_manifest_fails(repo, capsys):
+    git(repo, "rm", "--cached", "benchmark/manifest.json")
+    assert run(repo) == 1
+    assert "manifest" in capsys.readouterr().out

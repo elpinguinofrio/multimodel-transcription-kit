@@ -6,9 +6,11 @@ Every process on the same machine that names the same state file shares one queu
 
 ## 1. One config per machine
 
-Keep one file at `~/.config/transcription/transcription.ini` on each machine that transcribes.
-Start from the repo's `transcription.example.ini`; a `transcription.ini` in the repo root is gitignored.
-The library never searches for this file. Your app passes its path explicitly.
+The CLI defaults to `transcription.ini` in the current directory; in this checkout,
+that is the ignored root configuration copied from `transcription.example.ini`.
+Use `--config` to select another existing file. Consumers may keep one explicit
+configuration per machine, for example `~/.config/transcription/transcription.ini`.
+The library never searches for it; your app passes its path explicitly.
 
 ```ini
 [secrets]
@@ -36,6 +38,11 @@ A model with no limits configured still gets 429 retries, but no proactive queui
 A limit of `0` (shown in AI Studio for models your tier doesn't include) stops requests with `QuotaExhausted`.
 
 ## 2. Install into each app's environment (host or VM)
+
+For this owner's shared host workflow, use the repository-root `transcription-core`
+launcher described in [Shared host launcher](host-launcher.md). It carries a private
+runtime and resolves the current mount spelling; the VM's `.venv` is not portable.
+Normal Python consumers can continue to install the package into their own environment:
 
 ```sh
 # CORE = this checkout. In the VM: /Volumes/VM-shared/projects/multimodal-transcription-core
@@ -82,7 +89,7 @@ For Groq, pass the same limiter: `GroqAPI(rate_limiter=limiter)`.
 To keep request history and actual input/output token usage across all providers,
 set `[usage] file` in the CLI configuration or pass a shared `UsageLog` to each
 client. Fetch totals with `transcription-core usage --config <config>`.
-See [Simple request usage history](usage.md) for setup, filters and the Python API.
+See [Simple request usage history](usage-history.md) for setup, filters and the Python API.
 
 ### Which model each function uses
 
@@ -108,8 +115,13 @@ If they overlap anyway, the server's 429 is handled: it waits as long as the ser
 - **Exocortex:** keeps its own `engine/lib/transcriber` until its migration agent validates the installed core through the real app entry point (AGENTS.md).
   The swap: replace the `_load_module(.../transcriber.py)` and `chunked_transcriber.py` loads in `engine/pipelines/voice/pipeline.py` with the imports above.
   Then pass `api=GeminiAPI(rate_limiter=limiter)`, catch `QuotaExhausted` to write a "retry after" sidecar, and only then delete the copy.
-- **Quickstart example** (`examples/quickstart/run.py`): builds one limiter with `RateLimiter.from_parser(cfg, section_prefix="provider.")`.
-  It reads `[limits] tiers` and any `rpm`/`tpm`/`rpd` overrides in each `[provider.*]` section of its `config.ini`. Any other caller is protected only if it passes a `RateLimiter`.
+- **CLI quickstart:** use the commands in [README.md](../README.md#quickstart).
+  The CLI reads the root `transcription.ini` (or `--config`) and builds one limiter
+  from `[limits]` and `[model.*]` sections. Compare models through
+  `transcription-core bench`; it uses the same configuration and core engine.
+  The former `examples/quickstart` comparison application and its separate
+  `[provider.*]` configuration are retired. Existing local outputs are preserved;
+  keep them private. Library consumers still pass a `RateLimiter` explicitly.
 - **Clip Smith:** doesn't call the core today. Its transcription is local whisper plus `scripts/transcribe/correct_transcript_gemini.py`.
   Any new cloud transcription step should use the snippet above with the shared config, not a new Gemini client.
 

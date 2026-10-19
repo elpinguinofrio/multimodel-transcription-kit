@@ -22,7 +22,7 @@ its `parts[].audioTranscription.text` responses are read alongside ordinary text
 
 The result has the same keys as batch transcription: `text`, `model`,
 `duration`, `processing_time`, `input_tokens`, `output_tokens`, `success`.
-Token counts are the latest usage metadata reported by the server, or zero
+Token counts are the latest usage metadata reported by the server, or `None`
 when it supplies none. `processing_time` includes streaming at real-time speed.
 
 The client converts to mono 16 kHz PCM16 on temporary local disk, waits for
@@ -31,10 +31,11 @@ and `activityEnd`. It receives finalized `inputTranscription` text concurrently,
 ignoring interim hypotheses and assistant replies. Gemini 3.8 Live uses the
 `AUDIO` response modality; Transcribe Live uses `TEXT`.
 
-Input transcription messages are independently ordered relative to
-`turnComplete`, and the documented protocol has no terminal input-transcript
-marker. The client drains late input text until one quiet second after turn
-completion (bounded by the configured timeout). This is a best-effort drain;
+Input transcription messages are independently ordered relative to response
+completion. After audio ends, Transcribe Live also accepts `generationComplete`
+without `turnComplete`; audio-output Live models still require `turnComplete`.
+The client drains late input text until one quiet second after completion
+(bounded by the configured timeout). This is a best-effort drain;
 fragments delayed beyond that interval cannot be guaranteed. An explicitly
 unfinished transcript prevents success until completion or timeout.
 

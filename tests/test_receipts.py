@@ -216,3 +216,20 @@ def test_bench_applies_the_config_defaults_like_the_cli(tmp_path):
     receipt = json.loads((tmp_path / "runs" / "_details" / "receipts" / "parakeet__p1__v001.json").read_text())
     assert receipt["options"]["overlap_seconds"] == 2.0 and receipt["options"]["language"] == "ru"
     assert receipt["result"]["chunks"] == 4
+
+
+def test_bench_forwards_the_configured_enhancement_directory(tmp_path, monkeypatch):
+    config = tmp_path / "t.ini"
+    enhanced = tmp_path / "shared-cache" / "enhanced"
+    config.write_text(f"[defaults]\nenhanced_dir = {enhanced}\n" + CONFIG.format(url="http://127.0.0.1:1"))
+    audio = tone(tmp_path / "sample.wav", 2)
+    seen = []
+
+    def run(audio, spec, options, **kwargs):
+        seen.append(options)
+        return True, "sample.txt", "hello world"
+
+    monkeypatch.setattr(bench, "run_one", run)
+    assert bench.main(["--config", str(config), "--audio", str(audio), "--runs-dir", str(tmp_path / "runs"),
+                       "-m", "local"]) == 0
+    assert seen[0]["enhanced_dir"] == str(enhanced)

@@ -1,3 +1,6 @@
+> Historical design/implementation record. For current setup and structure, see
+> [README](../../../README.md) and the [current roadmap](../../roadmap.md).
+
 # Plan: transcription benchmark for my diaries
 
 ## Goal

@@ -81,7 +81,7 @@ def transcribe_live(audio_path, model, *, api=None):
     configured GeminiAPI's key, base URL, timeout and shared limiter. Requires
     the ``live`` extra; non-native audio also requires ffmpeg. Failures raise
     GeminiAPIError (quota errors propagate). Late text is drained for one quiet
-    second after turn completion; longer delays cannot be guaranteed. This is a
+    second after response completion; longer delays cannot be guaranteed. This is a
     single session, with no automatic replay or model fallback.
     """
     model_name = model.value if isinstance(model, GeminiModel) else str(model)
@@ -200,11 +200,15 @@ def _stream(ws, pcm, duration, model, timeout, started, usage=None):
                 if turn_complete:
                     settle_deadline = time.monotonic() + min(1.0, timeout)
             if end_started.is_set():
-                turn_complete |= bool(content.get("turnComplete"))
+                # Transcribe Live can finish with generationComplete alone.
+                # Audio-output models still need turnComplete; their generation
+                # can finish before playback/the turn has actually ended.
+                turn_complete |= bool(content.get("turnComplete") or (
+                    model == "gemini-3.5-transcribe-live" and content.get("generationComplete")))
             if turn_complete and settle_deadline is None:
-                # Input transcripts are independently ordered relative to turns.
-                # The protocol has no terminal input-transcript marker, so allow
-                # one quiet second for late fragments after turnComplete.
+                # Input transcripts are independently ordered, and some messages
+                # omit finished. Allow one quiet second for late fragments;
+                # an explicitly unfinished transcript must still finish.
                 settle_deadline = time.monotonic() + min(1.0, timeout)
         sender.join(timeout=1)
         if send_errors:

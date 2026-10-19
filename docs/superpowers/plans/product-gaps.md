@@ -1,12 +1,15 @@
-# Plan: close the PRODUCT.md gaps
+> Historical design/implementation record. For current setup and structure, see
+> [README](../../../README.md) and the [current roadmap](../../roadmap.md).
 
-Written 2026-10-14 from the gap audit. PRODUCT.md stays owner-edited; nothing here edits it.
+# Plan: close the docs/PRODUCT.md gaps
+
+Written 2026-10-14 from the gap audit. docs/PRODUCT.md stays owner-edited; nothing here edits it.
 Each workstream is test-first (red, then green) and keeps existing public signatures;
 behaviour changes are listed in docs/integration.md migration notes.
 
 ## Owner decisions (answered 2026-10-14)
 
-| Question in PRODUCT.md | Decision |
+| Question in docs/PRODUCT.md | Decision |
 |---|---|
 | What makes a model "best"; which fallbacks? | Best = first model in `[models] ranking` that is reachable, supports every explicitly requested feature and has quota left. Without `-m`, a failure before output moves to the next ranked model and is recorded. With `-m` there is never a fallback. |
 | Provider cannot supply a requested default feature? | Prefer capable models. A missing default-on feature warns on stderr and is recorded in metadata. An explicitly requested non-default value raises `UnsupportedFeatureError`. |

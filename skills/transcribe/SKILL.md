@@ -11,18 +11,32 @@ the library's job; do not reimplement them.
 
 ## Before running
 
-1. `command -v transcription-core` must succeed. If not, say the package is not installed
-   in this environment; do not install it without the user's approval.
-2. Find the config: the path the user gave, else `~/.config/transcription/transcription.ini`.
-   If neither exists, ask for it. Never edit it and never print the env file it points to.
-3. Optional health check (no transcription, no quota): 
-   `transcription-core --list-models --config "$CONFIG"`
+1. Establish the current machine with `uname -n` and resolve the user's shared checkout
+   from this machine. A missing PATH entry does not establish that the tool is absent.
+   Try the installed command, then an explicit checkout-local launcher. Never activate a
+   VM venv on the host: its Python paths can belong to the VM even on a shared disk.
+2. The checkout's `./transcription-core` launcher uses its private portable runtime,
+   requiring no host Python, pip, uv, PATH registration or VM command connection.
+   Run it with `--portable-info` and `--help` to confirm the runtime and paths. For video,
+   also check the reported `ffmpeg` and `ffprobe`; startup alone does not prove transcription.
+   On the VM an already working native `.venv/bin/transcription-core` can still be used.
+3. Respect an explicit config. The portable launcher otherwise supplies its packaged
+   configuration with paths resolved under the current shared root; do not pass a
+   VM-only `~/.config/transcription` path on the host. A native installation uses the
+   caller's config or the machine's existing config. Never print credentials or silently
+   install dependencies, edit config, start SSH, or switch transcription providers.
+4. Use the resolved executable for the optional metadata check `--list-models`.
+   With a native installation pass the explicit config; the portable launcher can use
+   its packaged default. Report host execution as untested until exercised on the host.
 
 ## Run
 
 - Text to the conversation: `transcription-core "$AUDIO" --config "$CONFIG"`
 - Saved transcript: `transcription-core "$AUDIO" --config "$CONFIG" -d "$DIR"`
   writes `<name>.<model>.md` beside earlier runs (`(2)`, `(3)`, ...); nothing is overwritten.
+
+Here `transcription-core` means the executable resolved above, which may be an
+absolute checkout path. Omit `--config` when using the portable packaged default.
 
 Pass only what the user asked for: `-m <model>` (exactly that model, no fallback),
 `--language xx`, `--no-speakers`, `--no-sounds`, `--timestamps none|major|phrase`,

@@ -1,3 +1,6 @@
+> Historical design/implementation record. For current setup and structure, see
+> [README](../../../README.md) and the [current roadmap](../../roadmap.md).
+
 # Reference: Gemini API rate limits, Google AI Pro account
 
 Account: Google AI Pro subscription. Source: AI Studio "Rate limits by model"

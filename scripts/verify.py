@@ -1,7 +1,7 @@
 """Public-release gate: run before every push. Exit 0 only when all checks pass.
 
-1. The git index (what a commit would publish) equals PUBLIC_FILES.txt. Stage the
-   intended files first; untracked and ignored local files are never inspected.
+1. Inspect the git index (what a commit would publish), including staged bytes.
+   Untracked files and unstaged working-copy edits are never inspected.
 2. Every audio file published is an approved sample in benchmark/manifest.json,
    with the recorded sha256 and exact duration.
 3. No private material: env files, personal config, references, review records,
@@ -12,14 +12,13 @@
 import argparse
 import fnmatch
 import hashlib
+import io
 import json
 import re
 import subprocess
-import sys
 import wave
 from pathlib import Path
 
-ALLOWLIST = "PUBLIC_FILES.txt"
 MANIFEST = "benchmark/manifest.json"
 MEDIA = {".wav", ".m4a", ".mp3", ".flac", ".ogg", ".aiff", ".caf", ".mov", ".mp4", ".webm", ".aac"}
 PRIVATE = [".env", "*/.env", ".env.*", "*/.env.*", "transcription.ini", "AGENTS.md", ".private/*",
@@ -30,14 +29,11 @@ CREDENTIALS = [re.compile(p) for p in (r"AIza[0-9A-Za-z_\-]{35}", r"gsk_[0-9A-Za
                                        r"sk-[A-Za-z0-9]{32,}", r"-----BEGIN [A-Z ]*PRIVATE KEY-----")]
 
 
-def allowlist(root):
-    lines = (root / ALLOWLIST).read_text(encoding="utf-8").splitlines()
-    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
-
-
 def index(root):
     out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True).stdout
-    return {name for name in out.decode().split("\0") if name}
+    return {name: subprocess.run(["git", "-C", str(root), "show", f":{name}"],
+                                check=True, capture_output=True).stdout
+            for name in out.decode().split("\0") if name}
 
 
 def is_private(name):
@@ -46,39 +42,37 @@ def is_private(name):
     return any(fnmatch.fnmatch(name, pattern) for pattern in PRIVATE)
 
 
-def wav_seconds(path):
-    with wave.open(str(path), "rb") as audio:
+def wav_seconds(data):
+    with wave.open(io.BytesIO(data), "rb") as audio:
         return audio.getnframes() / audio.getframerate()
 
 
 def check(root):
     problems = []
-    public, staged = allowlist(root), index(root)
-    problems += [f"tracked but not in {ALLOWLIST}: {name}" for name in sorted(staged - public)]
-    problems += [f"in {ALLOWLIST} but not staged: {name}" for name in sorted(public - staged)]
-    problems += [f"private file published: {name}" for name in sorted(public | staged) if is_private(name)]
-
-    samples = {s["path"]: s for s in json.loads((root / MANIFEST).read_text(encoding="utf-8"))["samples"]}
+    public = index(root)
+    problems += [f"private file published: {name}" for name in sorted(public) if is_private(name)]
+    try:
+        samples = {s["path"]: s for s in json.loads(public[MANIFEST])["samples"]}
+    except (KeyError, ValueError, TypeError) as exc:
+        return problems + [f"missing or invalid staged {MANIFEST}: {exc}"]
     for name in sorted(public):
         if Path(name).suffix.lower() in MEDIA and name not in samples:
             problems.append(f"audio not in {MANIFEST}: {name}")
     for name, sample in samples.items():
-        path = root / name
-        if name not in public or not path.is_file():
+        if name not in public:
             problems.append(f"approved sample missing from the release: {name}")
             continue
-        if hashlib.sha256(path.read_bytes()).hexdigest() != sample["sha256"]:
+        if hashlib.sha256(public[name]).hexdigest() != sample["sha256"]:
             problems.append(f"sha256 differs from {MANIFEST}: {name}")
             continue
-        if path.suffix.lower() == ".wav" and abs(wav_seconds(path) - sample["duration_seconds"]) > 1e-6:
+        if Path(name).suffix.lower() == ".wav" and abs(wav_seconds(public[name]) - sample["duration_seconds"]) > 1e-6:
             problems.append(f"duration differs from {MANIFEST}: {name}")
 
     for name in sorted(public):
-        path = root / name
-        if Path(name).suffix.lower() in MEDIA or not path.is_file():
+        if Path(name).suffix.lower() in MEDIA:
             continue
         try:
-            text = path.read_text(encoding="utf-8")
+            text = public[name].decode("utf-8")
         except UnicodeDecodeError:
             continue
         if any(pattern.search(text) for pattern in CREDENTIALS):

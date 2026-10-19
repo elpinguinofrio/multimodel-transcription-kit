@@ -1,13 +1,57 @@
-"""Every cli-runner flag from PRODUCT.md, exercised against a stubbed provider.
+"""Every cli-runner flag from docs/PRODUCT.md, exercised against a stubbed provider.
 
 BLIND SPOT: providers are stubbed here. Reachability probing and real transcript
 content are covered by the integration tests, not by this file.
 """
 import textwrap
+import subprocess
+import sys
 
 import pytest
 
 from multimodal_transcription_core import runner
+
+
+def test_cli_quickstart_respects_configured_daily_limit(tmp_path, capsys):
+    from multimodal_transcription_core.cli import main
+    from test_engine import gateway, tone
+
+    audio = tone(tmp_path / "clip.wav", 2)
+    config = tmp_path / "transcription.ini"
+    with gateway("http") as (url, seen):
+        config.write_text(f"""
+[models]
+ranking = local
+[model.local]
+kind = http
+model = test-local
+endpoint = {url}/v1/audio/transcriptions
+rpd = 1
+[limits]
+state_file = {tmp_path / 'state.sqlite'}
+""")
+        argv = [str(audio), "--config", str(config), "-m", "local", "--no-enhance", "--timestamps", "none"]
+        assert main(argv) == 0
+        assert capsys.readouterr().out == "hello world\n"
+        with pytest.raises(SystemExit) as error:
+            main(argv)
+        assert error.value.code == 2
+        assert "quota" in capsys.readouterr().err
+        assert len(seen) == 1
+
+
+def test_module_entry_point_preserves_transcription_failure_exit_status(tmp_path):
+    from test_engine import gateway, tone
+    audio = tone(tmp_path / "sample.wav", 2)
+    config = tmp_path / "config.ini"
+    with gateway("http", statuses=(403,)) as (url, _):
+        config.write_text("[models]\nranking = local\n[model.local]\nkind = http\nmodel = test\n"
+                          f"endpoint = {url}/v1/audio/transcriptions\n")
+        result = subprocess.run([sys.executable, "-m", "multimodal_transcription_core", str(audio),
+                                 "--config", str(config), "--no-enhance"],
+                                capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1, result.stderr
+    assert "403" in result.stderr
 
 
 CONFIG = """

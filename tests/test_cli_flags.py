@@ -1,4 +1,4 @@
-"""Every transcribe_file setting a person chooses has a CLI flag (PRODUCT.md: Simple CLI).
+"""Every transcribe_file setting a person chooses has a CLI flag (docs/PRODUCT.md: Simple CLI).
 
 A flag overrides [defaults]; without it the config or the library default applies.
 """

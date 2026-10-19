@@ -51,6 +51,8 @@ def gateway(mode="success", modality="TEXT"):
                 observed["audio"].extend(data)
                 observed["times"].append(time.monotonic())
                 if len(observed["times"]) == 1:
+                    if mode == "early_generation":
+                        ws.send(json.dumps({"serverContent": {"generationComplete": True}}))
                     if mode == "stream_error":
                         ws.send(json.dumps({"error": {"message": "stream rejected"}}))
                         return
@@ -72,13 +74,15 @@ def gateway(mode="success", modality="TEXT"):
                 except ConnectionClosed:
                     pass
                 return
-            ws.send(json.dumps({"serverContent": {"turnComplete": True}}))
+            completion = "generationComplete" if mode in ("generation_only", "generation_unfinished") else "turnComplete"
+            if mode != "early_generation":
+                ws.send(json.dumps({"serverContent": {completion: True}}))
             # Input transcripts are independently ordered: the last can arrive
             # after turnComplete. An early-return implementation loses this.
             time.sleep(0.02)
             ws.send(json.dumps({
                 "serverContent": {"inputTranscription": {
-                    "text": "world", **({"finished": False} if mode == "unfinished" else
+                    "text": "world", **({"finished": False} if mode in ("unfinished", "generation_unfinished") else
                                          {"finished": True} if mode == "finished" else {}),
                 }},
                 "usageMetadata": {"promptTokenCount": 7, "responseTokenCount": 3},
@@ -107,6 +111,37 @@ def live_function():
     function = getattr(core, "transcribe_live", None)
     assert callable(function), "The shared core must export transcribe_live"
     return function
+
+
+def test_transcribe_live_accepts_generation_completion_after_audio_ends(audio, monkeypatch):
+    # Real Transcribe Live sessions can finish with generationComplete and no turnComplete.
+    with gateway(mode="generation_only") as (base_url, _):
+        monkeypatch.setenv("GEMINI_BASE_URL", base_url)
+        result = live_function()(audio, "gemini-3.5-transcribe-live",
+                                 api=core.GeminiAPI(throttle_rate=0, timeout=2))
+    assert result["text"] == "Hello world"
+
+
+def test_generation_completion_cannot_accept_an_unfinished_transcript(audio, monkeypatch):
+    with gateway(mode="generation_unfinished") as (base_url, _):
+        monkeypatch.setenv("GEMINI_BASE_URL", base_url)
+        with pytest.raises(core.GeminiAPIError, match="Timed out"):
+            live_function()(audio, "gemini-3.5-transcribe-live",
+                            api=core.GeminiAPI(throttle_rate=0, timeout=2))
+
+
+def test_audio_output_live_still_requires_turn_completion(audio, monkeypatch):
+    with gateway(mode="generation_only", modality="AUDIO") as (base_url, _):
+        monkeypatch.setenv("GEMINI_BASE_URL", base_url)
+        with pytest.raises(core.GeminiAPIError, match="Timed out"):
+            live_function()(audio, "gemini-3.8-live", api=core.GeminiAPI(throttle_rate=0, timeout=2))
+
+
+def test_generation_completion_before_audio_ends_is_not_terminal(audio, monkeypatch):
+    with gateway(mode="early_generation") as (base_url, _):
+        monkeypatch.setenv("GEMINI_BASE_URL", base_url)
+        with pytest.raises(core.GeminiAPIError, match="Timed out"):
+            live_function()(audio, "gemini-3.5-transcribe-live", api=core.GeminiAPI(throttle_rate=0, timeout=2))
 
 
 @pytest.mark.parametrize("model,modality", [

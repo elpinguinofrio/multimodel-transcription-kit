@@ -161,6 +161,9 @@ def main(argv=None):
     overlap = config.get("defaults", "overlap_seconds", fallback=None)
     if overlap:
         options["overlap_seconds"] = float(overlap)
+    enhanced_dir = config.get("defaults", "enhanced_dir", fallback=None)
+    if enhanced_dir:
+        options["enhanced_dir"] = str(Path(enhanced_dir).expanduser())
     if args.temperature is not None:
         options["temperature"] = args.temperature
     options.update({name: getattr(args, name) for name in FEATURES if getattr(args, name) is not None})

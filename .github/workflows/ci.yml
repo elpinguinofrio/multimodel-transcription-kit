@@ -16,6 +16,13 @@ jobs:
       - run: python -m pip install '.[dev]'
       - run: python -m pytest -q
       - run: python scripts/verify.py
-      - run: python -m build
-      - run: transcription-core --help
-      - run: transcription-core http --help
+      - run: python -m build --wheel
+      - run: python -m pip install --force-reinstall --no-deps dist/*.whl
+      - name: Smoke test the installed wheel outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pip check
+          transcription-core --help
+          transcription-core bench --help
+          transcription-core http --help
+          transcription-core usage --help

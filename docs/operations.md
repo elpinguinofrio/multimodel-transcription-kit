@@ -50,11 +50,27 @@ given request. A server without that list is reported as answering but unverifie
 
 ## Release gate
 
-Before publishing: stage the intended files, then
+Before publishing, stage the intended files, then check the exact Git-index
+content that would be committed. There is no second public-file inventory to
+maintain. Untracked files and unstaged edits are outside this release check.
+Never force-add personal configuration, recordings, references, or transcripts.
 
 ```sh
-python scripts/verify.py        # index == PUBLIC_FILES.txt; approved audio only; no private files or keys
+python scripts/verify.py        # staged content: approved audio only; no private files or keys
 python -m pytest -q             # offline: providers are mocked or a local synthetic server
+python -m build --wheel        # build the installable package
 ```
 
-Offline checks do not contact real providers. Real-provider checks are run separately and reported as such.
+Install the resulting wheel into a disposable consumer environment, then run
+`transcription-core --help`, `transcription-core bench --help`, and
+`transcription-core http --help` from outside the source tree. Check dependencies
+with `python -m pip check`. Keep shared host/VM validation artifacts under the
+shared root, in a new ignored `.private/` run directory.
+
+The verifier reads staged text, audio, and `benchmark/manifest.json` directly from
+Git. A cleaned working copy cannot hide a staged credential or altered recording.
+The benchmark manifest remains necessary: it identifies the approved recording,
+its hash, exact duration, and terms.
+
+Offline checks do not contact real providers. Real-provider and consuming-app
+checks are run separately and reported as such.

@@ -17,10 +17,8 @@ build/
 # personal cli-runner config (copy transcription.example.ini)
 /transcription.ini
 
-# example app local state
-examples/quickstart/.env
-examples/quickstart/transcripts/
-!examples/quickstart/.env.example
+# Retained private outputs from the retired comparison example
+/examples/
 
 # benchmark: audio + _meta are public; everything local stays out
 benchmark/samples/*/runs/

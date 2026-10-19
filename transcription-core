@@ -1,0 +1,18 @@
+#!/bin/sh
+# Resolve this checkout on either side of the share; never enter the VM venv.
+set -eu
+PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
+export PATH
+entry=$0
+while [ -L "$entry" ]; do
+    parent=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd -P)
+    target=$(readlink "$entry")
+    case "$target" in /*) entry=$target ;; *) entry=$parent/$target ;; esac
+done
+root=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd -P)
+python="$root/.private/portable-macos-arm64/python/bin/python3"
+if [ ! -x "$python" ]; then
+    echo "transcription-core: shared portable runtime is missing; build it with scripts/build_portable.py" >&2
+    exit 1
+fi
+exec "$python" -I "$root/scripts/portable_entry.py" "$@"
