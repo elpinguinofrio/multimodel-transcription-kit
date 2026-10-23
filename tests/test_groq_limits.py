@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from multimodal_transcription_core import GroqAPI, Limits, RateLimiter
+from multimodel_transcription_kit import GroqAPI, Limits, RateLimiter
 
 
 def resp(status, body, headers=None):
@@ -27,7 +27,7 @@ def test_groq_retry_resends_full_audio(tmp_path):
         return resp(200, {"text": "привет"})
 
     with patch("requests.post", side_effect=fake_post), patch("time.sleep") as sleep, \
-         patch("multimodal_transcription_core.audio_converter.AudioConverter.get_audio_duration",
+         patch("multimodel_transcription_kit.audio_converter.AudioConverter.get_audio_duration",
                return_value=1.0):
         out = GroqAPI(retry_base_delay=0).speech_to_text(str(audio))
     assert out["text"] == "привет"
@@ -40,7 +40,7 @@ def test_groq_counts_against_the_limiter(tmp_path):
     audio.write_bytes(b"RIFF" + b"\0" * 64)
     rl = RateLimiter({"whisper-large-v3": Limits(rpd=5)})
     with patch("requests.post", return_value=resp(200, {"text": "x"})), \
-         patch("multimodal_transcription_core.audio_converter.AudioConverter.get_audio_duration",
+         patch("multimodel_transcription_kit.audio_converter.AudioConverter.get_audio_duration",
                return_value=1.0):
         GroqAPI(rate_limiter=rl).speech_to_text(str(audio))
     assert rl.usage("whisper-large-v3")["today"] == 1

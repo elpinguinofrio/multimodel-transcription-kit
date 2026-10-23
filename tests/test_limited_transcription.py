@@ -3,9 +3,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import chunked_transcriber, transcriber
-from multimodal_transcription_core import engine
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import chunked_transcriber, transcriber
+from multimodel_transcription_kit import engine
 
 
 def engine_seams(tmp_path, duration, chunks=2):
@@ -91,7 +91,7 @@ def test_short_file_passes_client_to_standard_path(tmp_path):
 
 
 def test_failed_boundary_merge_keeps_every_word():
-    from multimodal_transcription_core.chunk_merger import merge_adjacent_chunks
+    from multimodel_transcription_kit.chunk_merger import merge_adjacent_chunks
     a = "alpha " * 100 + "TAIL_A_END"
     b = "HEAD_B_START " + "beta " * 100
     api = MagicMock()

@@ -1,7 +1,7 @@
 """Benchmark runs: numbered transcripts plus receipts that reproduce them.
 
-    transcription-core bench --config C --audio A --runs-dir D -m NAME [-m NAME ...] --label L
-    transcription-core bench --replay D/_details/receipts/<run>.json --runs-dir D
+    multimodel-transcription-kit bench --config C --audio A --runs-dir D -m NAME [-m NAME ...] --label L
+    multimodel-transcription-kit bench --replay D/_details/receipts/<run>.json --runs-dir D
 
 Each attempt writes ``<model>__<label>__v###.txt`` (successes only) and always a
 receipt ``_details/receipts/<same>.json``: model spec, options, prompt and
@@ -98,7 +98,7 @@ def fuse_round(round_results, *, runs, label, argv, fuse_texts, model):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="transcription-core bench", description=__doc__,
+    parser = argparse.ArgumentParser(prog="multimodel-transcription-kit bench", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", help="Config with [model.<name>] sections, limits, usage and secrets")
     parser.add_argument("--audio", type=Path, help="Approved benchmark recording")

@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from multimodal_transcription_core import GeminiAPI
+from multimodel_transcription_kit import GeminiAPI
 
 
 @pytest.mark.parametrize("parts,expected", [
@@ -25,7 +25,7 @@ def test_reads_transcription_parts(monkeypatch, parts, expected):
 
 
 def test_missing_transcription_raises_with_diagnostic(monkeypatch):
-    from multimodal_transcription_core import ResponseError
+    from multimodel_transcription_kit import ResponseError
     api = GeminiAPI(throttle_rate=0)
     monkeypatch.setattr(api, "_rate_limit", lambda: None)
     response = Mock(status_code=200)

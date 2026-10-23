@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import GeminiAPI, GroqAPI, STTModel
-from multimodal_transcription_core import chunked_transcriber
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import GeminiAPI, GroqAPI, STTModel
+from multimodel_transcription_kit import chunked_transcriber
 
 
 def gemini_returning(monkeypatch, body):
@@ -89,7 +89,7 @@ def groq_returning(monkeypatch, body):
     api = GroqAPI(throttle_rate=0)
     response = Mock(status_code=200)
     response.json.return_value = body
-    from multimodal_transcription_core import groq_client
+    from multimodel_transcription_kit import groq_client
     monkeypatch.setattr(groq_client, "send_with_limits", lambda *a, **kw: response)
     return api
 
@@ -117,7 +117,7 @@ def test_groq_text_without_string_raises(monkeypatch):
 # ---------------------------------------------------------------- chunked
 
 def run_chunked(tmp_path, chunk_results, merged="merged"):
-    from multimodal_transcription_core import engine
+    from multimodel_transcription_kit import engine
     audio = tmp_path / "long.m4a"
     audio.touch()
     chunks = [MagicMock(path=f"/tmp/c{i}.m4a", start_time=i * 1800, end_time=(i + 1) * 1800 + 10)
@@ -158,6 +158,6 @@ def test_chunk_usage_is_unknown_when_any_chunk_lacks_it(tmp_path):
 @pytest.mark.parametrize("text", ["Speaker 1: [SILENCE]", "Speaker 1: [SILENCE]\nSpeaker 2: [silence]"])
 def test_labelled_silence_is_no_speech(text):
     # Seen live: gemini-3.5-flash-lite with diarization answered "Speaker 1: [SILENCE]".
-    from multimodal_transcription_core.transcription_types import is_no_speech
+    from multimodel_transcription_kit.transcription_types import is_no_speech
     assert is_no_speech(text)
     assert not is_no_speech("Speaker 1: [SILENCE] hello")

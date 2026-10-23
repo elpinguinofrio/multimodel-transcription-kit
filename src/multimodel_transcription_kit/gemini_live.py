@@ -94,7 +94,7 @@ def transcribe_live(audio_path, model, *, api=None):
     try:
         from websockets.sync.client import connect
     except ImportError as exc:
-        raise GeminiAPIError("Live transcription requires multimodal-transcription-core[live]") from exc
+        raise GeminiAPIError("Live transcription requires multimodel-transcription-kit[live]") from exc
     api = api if api is not None else GeminiAPI()
     if api.timeout <= 0:
         raise ValueError("Live timeout must be positive")

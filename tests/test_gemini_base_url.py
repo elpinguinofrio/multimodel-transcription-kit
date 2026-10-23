@@ -12,7 +12,7 @@ import importlib.util
 
 def _load_module(name: str):
     from importlib import import_module
-    return import_module(f"multimodal_transcription_core.{name}")
+    return import_module(f"multimodel_transcription_kit.{name}")
 
 
 GOOGLE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"

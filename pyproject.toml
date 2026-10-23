@@ -3,8 +3,8 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "multimodal-transcription-core"
-version = "0.3.0"
+name = "multimodel-transcription-kit"
+version = "0.4.0"
 description = "Reusable transcription clients, audio preparation, chunking, and merging"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,16 +17,13 @@ dev = ["pytest>=7", "build>=1", "websockets==15.0.1"]
 live = ["websockets==15.0.1"]
 
 [project.scripts]
-transcription-core = "multimodal_transcription_core.cli:main"
-
-[project.urls]
-Repository = "https://github.com/elpinguinofrio/multimodal-transcription-core"
+multimodel-transcription-kit = "multimodel_transcription_kit.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-multimodal_transcription_core = ["tiers/*.ini"]
+multimodel_transcription_kit = ["tiers/*.ini"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

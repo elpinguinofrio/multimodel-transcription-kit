@@ -5,7 +5,7 @@ import sys
 import time
 from dataclasses import asdict
 
-PACKAGE = "multimodal-transcription-core"
+PACKAGE = "multimodel-transcription-kit"
 
 
 def client_info():

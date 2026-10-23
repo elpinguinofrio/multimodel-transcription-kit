@@ -1,4 +1,4 @@
-# Multimodal Transcription Core
+# Multimodel Transcription Kit
 
 Reusable Python transcription through Gemini, Groq Whisper, and configured
 OpenAI-compatible endpoints. One library and CLI handle audio conversion,
@@ -6,10 +6,10 @@ chunking, reconstruction, explicit model selection/fallback, and shared limits.
 
 ## Quickstart
 
-Python 3.10+ is required. Install into the environment that will use the core:
+Python 3.10+ is required. From this checkout, install into the environment that will use the kit:
 
 ```sh
-pip install "multimodal-transcription-core[live] @ git+https://github.com/elpinguinofrio/multimodal-transcription-core.git"
+python -m pip install ".[live]"
 ```
 
 From a checkout, copy `transcription.example.ini` to `transcription.ini` **if you
@@ -19,11 +19,11 @@ out of Git. The CLI defaults to `./transcription.ini`; `--config` selects anothe
 `ffmpeg` and `ffprobe` are needed for conversion, splitting, and enhancement.
 
 ```sh
-transcription-core recording.m4a --config transcription.ini
-transcription-core recording.m4a --config transcription.ini -d notes/
-transcription-core recording.m4a --config transcription.ini -m whisper-large-v3 --timestamps phrase --no-enhance
-transcription-core recording.m4a --config transcription.ini -d notes/ --fuse gemini-3.5-flash-lite,whisper-large-v3
-transcription-core --list-models --config transcription.ini
+multimodel-transcription-kit recording.m4a --config transcription.ini
+multimodel-transcription-kit recording.m4a --config transcription.ini -d notes/
+multimodel-transcription-kit recording.m4a --config transcription.ini -m whisper-large-v3 --timestamps phrase --no-enhance
+multimodel-transcription-kit recording.m4a --config transcription.ini -d notes/ --fuse gemini-3.5-flash-lite,whisper-large-v3
+multimodel-transcription-kit --list-models --config transcription.ini
 ```
 
 Use model names present in your configuration. `notes/` must already exist.
@@ -33,14 +33,14 @@ named `<name>.<model>.md`; reruns add `.(2)`, `.(3)`, etc., preserving earlier f
 controls selection and permitted fallback. `--list-models` makes provider metadata
 requests; it does not transcribe audio. `--help` needs no configuration or provider.
 
-The checkout's `./transcription-core` is an optional host/VM launcher backed by a
+The checkout's `./multimodel-transcription-kit` is an optional host/VM launcher backed by a
 private runtime, not included in a fresh clone. See [host launcher](docs/host-launcher.md).
-Ordinary installs use the package's `transcription-core` command.
+Ordinary installs use the package's `multimodel-transcription-kit` command.
 
 ## Library
 
 ```python
-from multimodal_transcription_core import ModelSpec, RateLimiter, transcribe_file
+from multimodel_transcription_kit import ModelSpec, RateLimiter, transcribe_file
 
 limiter = RateLimiter.from_config("/path/to/transcription.ini")
 spec = ModelSpec(name="flash-lite", kind="gemini", model="gemini-3.5-flash-lite")
@@ -65,7 +65,7 @@ Use the same CLI and root configuration for benchmarking, rather than a separate
 example application:
 
 ```sh
-transcription-core bench --config transcription.ini --audio benchmark/samples/120s-diary-ru/120s-diary-ru.wav --runs-dir benchmark/samples/120s-diary-ru/runs -m gemini-3.5-flash-lite -m whisper-large-v3 --label comparison
+multimodel-transcription-kit bench --config transcription.ini --audio benchmark/samples/120s-diary-ru/120s-diary-ru.wav --runs-dir benchmark/samples/120s-diary-ru/runs -m gemini-3.5-flash-lite -m whisper-large-v3 --label comparison
 ```
 
 Each attempt records a receipt in `_details/receipts/`, including failures.
@@ -94,7 +94,7 @@ reference; private references and transcripts are never published.
 
 | Path | Purpose |
 |---|---|
-| `src/multimodal_transcription_core/` | Installable library and CLI; folder name is the Python import namespace |
+| `src/multimodel_transcription_kit/` | Installable library and CLI; folder name is the Python import namespace |
 | `tests/` | Offline tests with mocked providers or synthetic local servers |
 | `docs/` | Integration, operations, usage history, and roadmap |
 | `benchmark/` | Approved sample, hash manifest, compatibility entry point |

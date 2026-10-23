@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-import multimodal_transcription_core as core
+import multimodel_transcription_kit as core
 
 
 def log_at(path):
@@ -92,7 +92,7 @@ def test_default_large_transcription_records_chunks_and_merge_under_36(tmp_path,
     audio.write_bytes(b"synthetic")
     chunks = [SimpleNamespace(path=str(audio), start_time=i * 1800, end_time=(i + 1) * 1800)
               for i in range(2)]
-    from multimodal_transcription_core import engine as ct
+    from multimodel_transcription_kit import engine as ct
     history = log_at(tmp_path / "usage.sqlite")
     limiter = core.RateLimiter({"gemini-3.6-flash": core.Limits(rpd=20)})
     with gateway([(200, GEMINI)]) as (url, _):
@@ -127,11 +127,11 @@ def test_http_cli_and_usage_query_work_across_processes(tmp_path):
     audio.write_bytes(b"synthetic")
     # No token usage is returned: unknown must survive in rows and totals.
     with gateway([(200, {"text": "hello"})]) as (url, _):
-        command = [sys.executable, "-m", "multimodal_transcription_core", "http", "--audio", str(audio),
+        command = [sys.executable, "-m", "multimodel_transcription_kit", "http", "--audio", str(audio),
                    "--endpoint", url, "--output", str(tmp_path / "output"), "--usage-file", str(db)]
         result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
-    command = [sys.executable, "-m", "multimodal_transcription_core", "usage", "--db", str(db)]
+    command = [sys.executable, "-m", "multimodel_transcription_kit", "usage", "--db", str(db)]
     result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)[0]
@@ -201,7 +201,7 @@ def test_invalid_usage_stays_unknown(tmp_path, usage):
 
 def test_concurrent_processes_append_without_losing_history(tmp_path):
     db = tmp_path / "usage.sqlite"
-    code = ("from multimodal_transcription_core import UsageLog; import sys; "
+    code = ("from multimodel_transcription_kit import UsageLog; import sys; "
             "log=UsageLog(sys.argv[1]); "
             "\nfor i in range(5):\n with log.track('http', 'local', 'transcription'): pass\n")
     processes = [subprocess.Popen([sys.executable, "-c", code, str(db)], cwd=tmp_path,
@@ -252,7 +252,7 @@ def test_model_discovery_request_is_logged(tmp_path, monkeypatch):
 @pytest.mark.parametrize("kind,model", [("gemini", "gemini-3.6-flash"),
                                         ("groq", "whisper-large-v3"), ("http", "local")])
 def test_runner_enables_history_from_config_for_each_provider(tmp_path, monkeypatch, capsys, kind, model):
-    from multimodal_transcription_core import runner
+    from multimodel_transcription_kit import runner
     audio = tmp_path / "audio.wav"
     audio.write_bytes(b"synthetic")
     db = tmp_path / "usage.sqlite"

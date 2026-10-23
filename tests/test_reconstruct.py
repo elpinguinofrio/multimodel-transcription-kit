@@ -2,8 +2,8 @@
 
 import pytest
 
-from multimodal_transcription_core.errors import ReconstructionError
-from multimodal_transcription_core.reconstruct import Part, reconstruct
+from multimodel_transcription_kit.errors import ReconstructionError
+from multimodel_transcription_kit.reconstruct import Part, reconstruct
 
 WORDS = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november".split()
 

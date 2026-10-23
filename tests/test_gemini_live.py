@@ -9,7 +9,7 @@ import wave
 
 import pytest
 
-import multimodal_transcription_core as core
+import multimodel_transcription_kit as core
 
 
 @pytest.fixture
@@ -238,7 +238,7 @@ def test_explicitly_unfinished_transcription_cannot_return_success(audio, monkey
 
 
 def test_chunked_live_is_rejected_before_duration_probe(audio, monkeypatch):
-    from multimodal_transcription_core import chunked_transcriber
+    from multimodel_transcription_kit import chunked_transcriber
     def forbidden(*args, **kwargs):
         pytest.fail("Live models must not enter the REST overlap-merge pipeline")
     monkeypatch.setattr(chunked_transcriber, "get_duration", forbidden)

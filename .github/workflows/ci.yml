@@ -22,7 +22,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           python -m pip check
-          transcription-core --help
-          transcription-core bench --help
-          transcription-core http --help
-          transcription-core usage --help
+          multimodel-transcription-kit --help
+          multimodel-transcription-kit bench --help
+          multimodel-transcription-kit http --help
+          multimodel-transcription-kit usage --help

@@ -7,7 +7,7 @@ speech-like bursts this estimate ran about 5 dB above the true SNR.
 
 enhance() writes a 16-bit `<stem>.enhanced-<id>.flac` into the caller's cache_dir
 (the engine passes its per-run temporary folder unless the caller keeps copies),
-else $XDG_CACHE_HOME/transcription-core/enhanced, else ~/.cache/transcription-core/enhanced;
+else $XDG_CACHE_HOME/multimodel-transcription-kit/enhanced, else ~/.cache/multimodel-transcription-kit/enhanced;
 never beside the source. Noisy audio gets a high-pass and FFT denoise. Loudness is
 normalised (EBU R128) when it is too quiet or too loud; audio that is loud only by
 its true peak is peak-limited at its own level instead. The id hashes the source
@@ -108,7 +108,7 @@ def _render(source, target, chain):
 def default_cache_dir():
     """Where enhanced copies go when the caller names no folder (resolved at call time)."""
     base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "transcription-core" / "enhanced"
+    return Path(base) / "multimodel-transcription-kit" / "enhanced"
 
 
 def enhance(source, assessment, *, force=False, cache_dir=None):

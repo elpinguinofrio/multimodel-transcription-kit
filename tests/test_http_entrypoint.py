@@ -33,7 +33,7 @@ def test_installed_cli_preserves_response_and_source(tmp_path):
     thread.start()
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}/v1/audio/transcriptions"
-        command = [sys.executable, "-m", "multimodal_transcription_core", "http", "--audio", str(audio),
+        command = [sys.executable, "-m", "multimodel_transcription_kit", "http", "--audio", str(audio),
                    "--endpoint", endpoint, "--model", "synthetic-model", "--language", "ru", "--output", str(output)]
         result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr

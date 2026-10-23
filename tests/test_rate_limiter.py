@@ -8,7 +8,7 @@ from datetime import datetime
 
 import pytest
 
-from multimodal_transcription_core.rate_limiter import (
+from multimodel_transcription_kit.rate_limiter import (
     Limits, QuotaExhausted, RateLimiter, RateLimitTimeout, RequestTooLarge, QUOTA_DAY_TZ,
     estimate_audio_tokens, next_quota_reset, parse_count,
 )
@@ -252,14 +252,14 @@ rpm = 1
 
 
 def test_builtin_tier_ships_public_limits():
-    from multimodal_transcription_core.rate_limiter import load_tier
+    from multimodel_transcription_kit.rate_limiter import load_tier
     tier = load_tier("gemini-pro-tier")
     assert tier["gemini-3.5-flash-lite"] == Limits(rpm=15, tpm=250_000, rpd=500)
     assert tier["gemini-3-flash-preview"] == Limits(rpm=5, tpm=250_000, rpd=20)
 
 
 def test_unknown_tier_names_the_available_ones():
-    from multimodal_transcription_core.rate_limiter import load_tier
+    from multimodel_transcription_kit.rate_limiter import load_tier
     with pytest.raises(FileNotFoundError, match="gemini-pro-tier"):
         load_tier("no-such-tier")
 

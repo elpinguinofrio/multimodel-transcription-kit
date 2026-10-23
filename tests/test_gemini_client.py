@@ -17,7 +17,7 @@ import requests
 
 def _load_gemini():
     from importlib import import_module
-    return import_module("multimodal_transcription_core.gemini_client")
+    return import_module("multimodel_transcription_kit.gemini_client")
 
 
 _gemini = _load_gemini()
@@ -83,7 +83,7 @@ class TestPostWithRetry:
     def test_exhausted_429_raises_rate_limit_timeout(self):
         # 0.2.0: an exhausted 429 raises instead of returning, so a chunked
         # transcript can never merge around a rate-limited hole.
-        from multimodal_transcription_core.rate_limiter import RateLimitTimeout
+        from multimodel_transcription_kit.rate_limiter import RateLimitTimeout
         api = _api(max_retries=2, retry_base_delay=0.0)
         post = MagicMock(return_value=_resp(429))
         with patch("requests.post", post), patch("time.sleep"):

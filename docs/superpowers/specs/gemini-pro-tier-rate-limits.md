@@ -6,7 +6,7 @@
 Account: Google AI Pro subscription. Source: AI Studio "Rate limits by model"
 page, copied by the owner on 2026-10-14. Values are limits only (usage dropped).
 Stale when: the tier or project changes, or Google changes quotas.
-Machine-readable copy used at runtime: `src/multimodal_transcription_core/tiers/gemini-pro-tier.ini`.
+Machine-readable copy used at runtime: `src/multimodel_transcription_kit/tiers/gemini-pro-tier.ini`.
 The paste was cut off after "Gemini 3.8 Live Extended Thinking".
 
 | Model | Category | RPM | TPM | RPD |

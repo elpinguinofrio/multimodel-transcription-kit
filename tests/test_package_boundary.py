@@ -1,13 +1,30 @@
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
 
-from multimodal_transcription_core import GeminiAPI
-from multimodal_transcription_core.audio_chunker import AudioChunk, cleanup_chunks, split_audio
-from multimodal_transcription_core.config import load_env_file
+from multimodel_transcription_kit import GeminiAPI
+from multimodel_transcription_kit.audio_chunker import AudioChunk, cleanup_chunks, split_audio
+from multimodel_transcription_kit.config import load_env_file
+
+
+def test_public_package_and_module_cli_use_the_kit_name():
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, PYTHONPATH=str(root / "src") + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    imported = subprocess.run(
+        [sys.executable, "-c", "import json; from multimodel_transcription_kit.receipts import client_info; "
+         "print(json.dumps(client_info()))"], env=env, capture_output=True, text=True, timeout=20)
+    assert imported.returncode == 0, imported.stderr
+    assert json.loads(imported.stdout)["package"] == "multimodel-transcription-kit"
+    help_result = subprocess.run([sys.executable, "-m", "multimodel_transcription_kit", "--help"],
+                                 env=env, capture_output=True, text=True, timeout=20)
+    assert help_result.returncode == 0, help_result.stderr
+    assert "multimodel-transcription-kit" in help_result.stdout
 
 
 def test_core_does_not_discover_private_parent_config(tmp_path, monkeypatch):
@@ -39,7 +56,7 @@ def test_cleanup_preserves_short_original(tmp_path):
     source = tmp_path / "original.wav"
     source.write_bytes(b"immutable-source")
     before = hashlib.sha256(source.read_bytes()).hexdigest()
-    with patch("multimodal_transcription_core.audio_chunker.get_duration", return_value=120):
+    with patch("multimodel_transcription_kit.audio_chunker.get_duration", return_value=120):
         chunks = split_audio(str(source))
     cleanup_chunks(chunks)
     assert source.is_file()

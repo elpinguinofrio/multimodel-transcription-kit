@@ -1,7 +1,7 @@
 """A missing key error names the actual cause and the fix, never the key."""
 import pytest
 
-from multimodal_transcription_core import GeminiAPI, GeminiAPIError, GroqAPI, GroqAPIError
+from multimodel_transcription_kit import GeminiAPI, GeminiAPIError, GroqAPI, GroqAPIError
 
 CLIENTS = [(GeminiAPI, GeminiAPIError, "GEMINI_API_KEY"), (GroqAPI, GroqAPIError, "GROQ_API_KEY")]
 

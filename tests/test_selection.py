@@ -11,9 +11,9 @@ import threading
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import runner, selection
-from multimodal_transcription_core.engine import ModelSpec
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import runner, selection
+from multimodel_transcription_kit.engine import ModelSpec
 
 A = ModelSpec(name="a", kind="gemini", model="gemini-3.5-flash-lite")
 B = ModelSpec(name="b", kind="groq", model="whisper-large-v3")

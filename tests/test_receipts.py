@@ -10,8 +10,8 @@ from unittest.mock import Mock
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import bench, engine, runner
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import bench, engine, runner
 from test_engine import gateway, tone
 
 
@@ -37,7 +37,7 @@ def test_engine_keeps_raw_responses_and_client_version_when_asked(tmp_path, monk
         result = engine.transcribe_file(audio, spec_for(kind, url), keep_raw=True, limiter=core.RateLimiter({}))
     part = result["parts"][0]
     assert part["raw_response"] and part["request"]["model"] == spec_for(kind, url).model
-    assert result["client"]["package"] == "multimodal-transcription-core" and result["client"]["version"]
+    assert result["client"]["package"] == "multimodel-transcription-kit" and result["client"]["version"]
 
 
 CONFIG = """
@@ -184,7 +184,7 @@ def test_machine_seeded_draft_or_changed_references_are_refused(tmp_path, record
 
 
 def test_bench_fuse_writes_a_fused_run_with_its_inputs(tmp_path, monkeypatch):
-    from multimodal_transcription_core import fusion
+    from multimodel_transcription_kit import fusion
     monkeypatch.setattr(fusion, "gemini_fuser", lambda model, **kw: lambda texts: "hello world")
     config = tmp_path / "t.ini"
     with gateway("http") as (url, _):

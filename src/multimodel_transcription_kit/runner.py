@@ -2,7 +2,7 @@
 
 This module is the CLI layer, and it is the only place that reads a config
 file. The importable library still receives every value explicitly, so
-`import multimodal_transcription_core` discovers nothing.
+`import multimodel_transcription_kit` discovers nothing.
 """
 
 import argparse
@@ -138,7 +138,7 @@ def render_document(audio, result):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="transcription-core",
+        prog="multimodel-transcription-kit",
         description="Transcribe one audio file. Use 'http --help' for a raw HTTP request.")
     parser.add_argument("audio", nargs="?", type=Path, help="Audio file to transcribe")
     parser.add_argument("-d", "--destination", type=Path,
@@ -166,7 +166,7 @@ def build_parser():
                         help="Transcribe an enhanced temporary copy (default: automatic when loudness or noise "
                              "is a problem; --no-enhance never, --enhance always)")
     parser.add_argument("--keep-enhanced", action="store_true", default=None,
-                        help="Keep the enhanced copy in [defaults] enhanced_dir, else ~/.cache/transcription-core/"
+                        help="Keep the enhanced copy in [defaults] enhanced_dir, else ~/.cache/multimodel-transcription-kit/"
                              "enhanced (default: deleted after the run)")
     parser.add_argument("--fuse", metavar="MODELS",
                         help="Comma-separated configured models, or 'all' for the ranking: run each on the "
@@ -222,7 +222,7 @@ def _run_fusion(args, config, names, limiter, usage_log):
             limiter=limiter, fusion_model=model, **_settings(args, config))
         error = None
     except NoModelAvailableError as exc:
-        print(f"transcription-core: {exc}", file=sys.stderr)
+        print(f"multimodel-transcription-kit: {exc}", file=sys.stderr)
         return 1
     except FusionError as exc:
         fused, error = {"individual": exc.individual}, exc
@@ -232,11 +232,11 @@ def _run_fusion(args, config, names, limiter, usage_log):
         written.append((result["name"], path))
         print(path, file=sys.stderr)
     if error is not None:
-        print(f"transcription-core: {error}; the individual transcripts are kept", file=sys.stderr)
+        print(f"multimodel-transcription-kit: {error}; the individual transcripts are kept", file=sys.stderr)
         return 1
     path = write_transcript(args.destination, args.audio, "fused", render_fused_document(args.audio, fused, written))
     for failure in fused["fusion"]["failures"]:
-        print(f"transcription-core: {failure['name']}: {failure['error']}", file=sys.stderr)
+        print(f"multimodel-transcription-kit: {failure['name']}: {failure['error']}", file=sys.stderr)
     print(path, file=sys.stderr)
     return 0
 
@@ -324,19 +324,19 @@ def main(argv=None):
     except NoModelAvailableError as error:
         if not any("error" in attempt for attempt in error.attempts):
             parser.error(f"No configured model is available; check keys, endpoints and quota ({error})")
-        print(f"transcription-core: {error}", file=sys.stderr)
+        print(f"multimodel-transcription-kit: {error}", file=sys.stderr)
         return 1
     except (TranscriptionError, RateLimitError) as error:
-        print(f"transcription-core: {args.model}: {describe_error(error)}", file=sys.stderr)
+        print(f"multimodel-transcription-kit: {args.model}: {describe_error(error)}", file=sys.stderr)
         return 1
     chosen = result.get("selection", {}).get("chosen", candidates[0])
     for attempt in result.get("selection", {}).get("attempts", []):
-        print(f"transcription-core: {attempt['name']}: {attempt.get('error') or attempt.get('skipped')}",
+        print(f"multimodel-transcription-kit: {attempt['name']}: {attempt.get('error') or attempt.get('skipped')}",
               file=sys.stderr)
     for warning in result.get("warnings", []):
-        print(f"transcription-core: warning: {warning}", file=sys.stderr)
+        print(f"multimodel-transcription-kit: warning: {warning}", file=sys.stderr)
     if result.get("no_speech"):
-        print("transcription-core: no speech detected", file=sys.stderr)
+        print("multimodel-transcription-kit: no speech detected", file=sys.stderr)
 
     if args.destination is None:
         print(result["text"].strip())

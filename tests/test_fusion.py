@@ -13,9 +13,9 @@ from unittest.mock import Mock
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import fusion, runner
-from multimodal_transcription_core.engine import ModelSpec
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import fusion, runner
+from multimodel_transcription_kit.engine import ModelSpec
 
 SPECS = [ModelSpec(name=n, kind="groq", model=f"whisper-{n}") for n in ("a", "b", "c")]
 

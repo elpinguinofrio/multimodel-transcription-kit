@@ -1,23 +1,23 @@
 # Shared host launcher
 
-The root `transcription-core` executable is independent of `.venv`, its absolute
+The root `multimodel-transcription-kit` executable is independent of `.venv`, its absolute
 shebang, and the VM's Python installation. It runs the same packaged core with a
 copy of the already installed standalone CPython runtime and dependencies under
-`.private/portable-macos-arm64`. It does not download software or modify either
+`.private/portable-macos-arm64-kit`. It does not download software or modify either
 machine's PATH, home configuration, services or skill registrations.
 
 Run it from this machine's view of the shared checkout:
 
 ```sh
-./transcription-core --portable-info
-./transcription-core --help
-./transcription-core --list-models
-./transcription-core recording.m4a -d existing-output-directory
+./multimodel-transcription-kit --portable-info
+./multimodel-transcription-kit --help
+./multimodel-transcription-kit --list-models
+./multimodel-transcription-kit recording.m4a -d existing-output-directory
 ```
 
 For example, a checkout can appear at
-`$HOME/VM-shared/projects/multimodal-transcription-core` on the host and
-`/Volumes/VM-shared/projects/multimodal-transcription-core` in the VM. The launcher resolves
+`$HOME/VM-shared/projects/multimodel-transcription-kit` on the host and
+`/Volumes/VM-shared/projects/multimodel-transcription-kit` in the VM. The launcher resolves
 its own location, so it does not put either spelling into the interpreter path.
 Host execution still needs a real host-side check; a relocated VM test is not that check.
 

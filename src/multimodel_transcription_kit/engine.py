@@ -354,7 +354,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
         assessment = assess_audio(source)
     except AudioPreparationError as exc:
         warnings.append(f"loudness not assessed: {exc}")
-    work = Path(tempfile.mkdtemp(prefix="transcription-core-"))
+    work = Path(tempfile.mkdtemp(prefix="multimodel-transcription-kit-"))
     try:
         if assessment is not None and enhance is not False and (assessment["problems"] or enhance):
             try:

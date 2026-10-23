@@ -14,9 +14,9 @@ import wave
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import audio_chunker, engine, runner
-from multimodal_transcription_core.engine import ModelSpec
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import audio_chunker, engine, runner
+from multimodel_transcription_kit.engine import ModelSpec
 
 needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")),
                                   reason="requires ffmpeg and ffprobe")

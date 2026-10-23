@@ -12,7 +12,7 @@ import subprocess
 
 def _load_audio_converter():
     from importlib import import_module
-    return import_module("multimodal_transcription_core.audio_converter")
+    return import_module("multimodel_transcription_kit.audio_converter")
 
 
 class TestGetMetadata:

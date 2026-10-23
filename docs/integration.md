@@ -18,7 +18,7 @@ env_file = ~/.config/transcription/.env      # GEMINI_API_KEY=..., GROQ_API_KEY=
 
 [limits]
 # Local disk only. Never /Volumes/VM-shared: SQLite locking is unreliable on SMB.
-state_file = ~/.local/state/transcription-core/ratelimit.sqlite
+state_file = ~/.local/state/multimodel-transcription-kit/ratelimit.sqlite
 max_wait_seconds = 3600                      # longest a request may wait for a slot
 
 tiers = gemini-pro-tier                      # public tier limits shipped with the package
@@ -28,7 +28,7 @@ kind = gemini
 # rpd = 250                                  # optional: this machine's share, overrides the tier
 ```
 
-The limits preset lives in the package (`src/multimodal_transcription_core/tiers/gemini-pro-tier.ini`). Its source is the owner's AI Studio project snapshot, not a public quota guarantee for every Google AI Pro subscriber. Check your project's active quotas before using it.
+The limits preset lives in the package (`src/multimodel_transcription_kit/tiers/gemini-pro-tier.ini`). Its source is the owner's AI Studio project snapshot, not a public quota guarantee for every Google AI Pro subscriber. Check your project's active quotas before using it.
 Your config only names the tier and holds what is specific to one machine.
 `rpm`/`tpm`/`rpd` in a `[model.*]` section override the tier one field at a time. Values like `"250K"`, `"14.4K"` and `"Unlimited"` all parse.
 If Google changes the quotas, update the tier file and commit it.
@@ -39,17 +39,17 @@ A limit of `0` (shown in AI Studio for models your tier doesn't include) stops r
 
 ## 2. Install into each app's environment (host or VM)
 
-For this owner's shared host workflow, use the repository-root `transcription-core`
+For this owner's shared host workflow, use the repository-root `multimodel-transcription-kit`
 launcher described in [Shared host launcher](host-launcher.md). It carries a private
 runtime and resolves the current mount spelling; the VM's `.venv` is not portable.
 Normal Python consumers can continue to install the package into their own environment:
 
 ```sh
-# CORE = this checkout. In the VM: /Volumes/VM-shared/projects/multimodal-transcription-core
+# CORE = this checkout. In the VM: /Volumes/VM-shared/projects/multimodel-transcription-kit
 # On the host, use the Mac's own path to the same folder.
-CORE=/Volumes/VM-shared/projects/multimodal-transcription-core
-<app>/.venv/bin/pip install "$CORE"          # or: pip install dist/multimodal_transcription_core-0.3.0-py3-none-any.whl
-<app>/.venv/bin/transcription-core --list-models --config ~/.config/transcription/transcription.ini
+CORE=/Volumes/VM-shared/projects/multimodel-transcription-kit
+<app>/.venv/bin/pip install "$CORE"          # or: pip install dist/multimodel_transcription_kit-0.4.0-py3-none-any.whl
+<app>/.venv/bin/multimodel-transcription-kit --list-models --config ~/.config/transcription/transcription.ini
 ```
 
 `--list-models` should list your models with `today N/500`. The count covers only requests made through the core on this machine.
@@ -60,7 +60,7 @@ AI Studio's rate-limit page stays the source of truth.
 ```python
 import os
 from pathlib import Path
-from multimodal_transcription_core import (
+from multimodel_transcription_kit import (
     GeminiAPI, RateLimiter, QuotaExhausted, RateLimitTimeout, RequestTooLarge,
     transcribe, transcribe_large,
 )
@@ -88,7 +88,7 @@ For Groq, pass the same limiter: `GroqAPI(rate_limiter=limiter)`.
 
 To keep request history and actual input/output token usage across all providers,
 set `[usage] file` in the CLI configuration or pass a shared `UsageLog` to each
-client. Fetch totals with `transcription-core usage --config <config>`.
+client. Fetch totals with `multimodel-transcription-kit usage --config <config>`.
 See [Simple request usage history](usage-history.md) for setup, filters and the Python API.
 
 ### Which model each function uses
@@ -118,12 +118,30 @@ If they overlap anyway, the server's 429 is handled: it waits as long as the ser
 - **CLI quickstart:** use the commands in [README.md](../README.md#quickstart).
   The CLI reads the root `transcription.ini` (or `--config`) and builds one limiter
   from `[limits]` and `[model.*]` sections. Compare models through
-  `transcription-core bench`; it uses the same configuration and core engine.
+  `multimodel-transcription-kit bench`; it uses the same configuration and core engine.
   The former `examples/quickstart` comparison application and its separate
   `[provider.*]` configuration are retired. Existing local outputs are preserved;
   keep them private. Library consumers still pass a `RateLimiter` explicitly.
 - **Clip Smith:** doesn't call the core today. Its transcription is local whisper plus `scripts/transcribe/correct_transcript_gemini.py`.
   Any new cloud transcription step should use the snippet above with the shared config, not a new Gemini client.
+
+## Migration notes: 0.4.0 naming change
+
+The distribution and executable are `multimodel-transcription-kit`; the Python
+namespace is `multimodel_transcription_kit`. There are no package aliases,
+legacy command names, or import shims. Function signatures are unchanged.
+Install the new wheel into each consumer environment and update its imports or
+subprocess command to these canonical names. The checkout folder is
+`projects/multimodel-transcription-kit` under the designated shared root.
+`transcription.ini` and `transcription.example.ini` remain the configuration names.
+Install from the checkout or a built wheel while the owner handles the GitHub
+repository rename separately. The local Git remote is left unchanged.
+
+Exocortex and Clip Smith have not yet migrated their runtime transcription paths
+to this library. Their repository READMEs link the current integration handoff.
+Validate the installed package through each real application entry point before
+removing its existing implementation. Preserve existing quota/usage databases;
+caller-supplied paths stay explicit and are not automatically reset or migrated.
 
 ## Migration notes: 0.2.0 → 0.3.0
 
@@ -149,7 +167,7 @@ Both apps must review these before upgrading; signatures are unchanged, behaviou
 - **Errors:** every typed error derives from `TranscriptionError`, which derives from `RuntimeError`, so
   `except RuntimeError` still catches them. `GeminiAPIError` and `GroqAPIError` now derive from it too and
   carry `.status` (HTTP status) when there was one. Rate-limit errors are unchanged and never wrapped.
-- **Changed: `transcribe_http` / `transcription-core http`** now use the shared retry policy (429/5xx) and
+- **Changed: `transcribe_http` / `multimodel-transcription-kit http`** now use the shared retry policy (429/5xx) and
   accept `limiter=`; a non-200 raises `HTTPProviderError`, which is still a `urllib.error.HTTPError`.
 - **Changed: chunk boundaries** are spread evenly, so no part exceeds `chunk_sec + overlap_sec` (the last
   part could reach 1.5x before). Starts stay on round numbers when the duration is a multiple of the chunk.
@@ -163,7 +181,7 @@ Both apps must review these before upgrading; signatures are unchanged, behaviou
   in the run's temporary folder, and that copy is transcribed and then deleted, also when the run fails
   (owner decision, 2026-10-16). `result["audio"]["enhanced"]` keeps its filters, `sha256` and `kept`.
   `transcribe_file(keep_enhanced=True)` / `--keep-enhanced` keeps it in `enhanced_dir=` / `[defaults] enhanced_dir`,
-  else `$XDG_CACHE_HOME/transcription-core/enhanced`, else `~/.cache/transcription-core/enhanced`; never beside
+  else `$XDG_CACHE_HOME/multimodel-transcription-kit/enhanced`, else `~/.cache/multimodel-transcription-kit/enhanced`; never beside
   the source. `enhanced_dir` alone no longer keeps copies. Audio that is loud only by its true peak is
   peak-limited at its own level instead of normalised to -16 LUFS. Pass `enhance=False` (`--no-enhance`) to
   keep apps' current behaviour.

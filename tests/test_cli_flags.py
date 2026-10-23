@@ -4,7 +4,7 @@ A flag overrides [defaults]; without it the config or the library default applie
 """
 import pytest
 
-from multimodal_transcription_core import engine, runner
+from multimodel_transcription_kit import engine, runner
 
 CONFIG = "[defaults]\noverlap_seconds = 12\n[models]\nranking = w\n[model.w]\nkind = groq\n"
 

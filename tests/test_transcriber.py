@@ -11,7 +11,7 @@ import importlib.util
 
 def _load_transcriber():
     from importlib import import_module
-    return import_module("multimodal_transcription_core.transcriber")
+    return import_module("multimodel_transcription_kit.transcriber")
 
 
 class TestTranscriber:

@@ -27,7 +27,7 @@ def load_script(name):
 def test_portable_config_uses_current_shared_mount_and_keeps_source(tmp_path):
     entry = load_script('portable_entry')
     root = tmp_path / 'host shared path' / 'projects' / 'core'
-    bundle = root / '.private' / 'portable-macos-arm64'
+    bundle = root / '.private' / 'portable-macos-arm64-kit'
     bundle.mkdir(parents=True)
     original = '[secrets]\nenv_file = ~/.config/transcription/.env\n[models]\nranking = a\n[model.a]\nkind = gemini\n'
     (bundle / 'config.ini').write_text(original)
@@ -42,15 +42,15 @@ def test_portable_config_uses_current_shared_mount_and_keeps_source(tmp_path):
 
 
 def test_missing_bundle_does_not_execute_broken_vm_venv(tmp_path):
-    launcher = ROOT / 'transcription-core'
+    launcher = ROOT / 'multimodel-transcription-kit'
     assert launcher.is_file(), 'A repository-relative launcher is required'
     project = tmp_path / 'host mount' / 'core'; project.mkdir(parents=True)
-    shutil.copy2(launcher, project / 'transcription-core')
+    shutil.copy2(launcher, project / 'multimodel-transcription-kit')
     old = project / '.venv' / 'bin'; old.mkdir(parents=True)
     marker = project / 'wrong-runtime-used'
     (old / 'python').write_text(f'#!/bin/sh\ntouch "{marker}"\n')
     (old / 'python').chmod(0o755)
-    result = subprocess.run(['/bin/sh', str(project / 'transcription-core'), '--help'], capture_output=True, text=True)
+    result = subprocess.run(['/bin/sh', str(project / 'multimodel-transcription-kit'), '--help'], capture_output=True, text=True)
     assert result.returncode != 0
     assert 'portable' in result.stderr.lower()
     assert not marker.exists()
@@ -63,7 +63,7 @@ def test_portable_cli_keeps_temporary_audio_in_the_shared_checkout(tmp_path, mon
     monkeypatch.setattr(tempfile, 'tempdir', None)
     monkeypatch.setenv('TMPDIR', str(tmp_path / 'outside-share'))
     monkeypatch.syspath_prepend(str(tmp_path))
-    from multimodal_transcription_core import cli
+    from multimodel_transcription_kit import cli
 
     def run(argv):
         assert argv == ['recording.wav', '--config', 'explicit.ini']
@@ -101,19 +101,19 @@ def test_relocated_launcher_runs_cli_with_empty_home_and_minimal_path(tmp_path):
     builder = load_script('build_portable')
     project = tmp_path / 'different host mount' / 'projects' / 'core'
     scripts = project / 'scripts'; scripts.mkdir(parents=True)
-    shutil.copy2(ROOT / 'transcription-core', project / 'transcription-core')
+    shutil.copy2(ROOT / 'multimodel-transcription-kit', project / 'multimodel-transcription-kit')
     shutil.copy2(ROOT / 'scripts' / 'portable_entry.py', scripts / 'portable_entry.py')
-    bundle = project / '.private' / 'portable-macos-arm64'
+    bundle = project / '.private' / 'portable-macos-arm64-kit'
     binary = bundle / 'python' / 'bin'; binary.mkdir(parents=True)
     (binary / 'python3').symlink_to(sys.executable)
     site = bundle / 'site-packages'; site.mkdir()
-    shutil.copytree(ROOT / 'src' / 'multimodal_transcription_core', site / 'multimodal_transcription_core',
+    shutil.copytree(ROOT / 'src' / 'multimodel_transcription_kit', site / 'multimodel_transcription_kit',
                     ignore=shutil.ignore_patterns('__pycache__'))
     for name in builder.DEPENDENCIES:
         builder.copy_distribution(name, site)
     home = tmp_path / 'empty-home'; home.mkdir()
     env = dict(os.environ, HOME=str(home), PATH='/usr/bin:/bin', PYTHONPATH='/nonexistent')
-    result = subprocess.run(['/bin/sh', str(project / 'transcription-core'), '--help'],
+    result = subprocess.run(['/bin/sh', str(project / 'multimodel-transcription-kit'), '--help'],
                             env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'Transcribe one audio file' in result.stdout

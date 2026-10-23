@@ -5,7 +5,7 @@ The transport dependency is pinned to `websockets==15.0.1`; the ordinary upload
 client does not need that extra. Non-native audio requires an existing `ffmpeg`.
 
 ```python
-from multimodal_transcription_core import GeminiAPI, transcribe_live
+from multimodel_transcription_kit import GeminiAPI, transcribe_live
 
 api = GeminiAPI(rate_limiter=limiter)  # reuse the application's configured client
 result = transcribe_live("recording.m4a", "gemini-3.8-live", api=api)

@@ -3,7 +3,7 @@
 [Product specification](PRODUCT.md) remains the owner-controlled specification. This is
 an implementation map, not a claim that every product requirement is validated.
 It consolidates the two October 14 roadmap drafts; proposed versions 0.4–1.0
-were never agreed release commitments. Package metadata currently declares 0.3.0.
+were never agreed release commitments. Package metadata currently declares 0.4.0.
 
 ## Existing implementation
 

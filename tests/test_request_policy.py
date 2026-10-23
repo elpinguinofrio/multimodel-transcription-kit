@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from multimodal_transcription_core.rate_limiter import (
+from multimodel_transcription_kit.rate_limiter import (
     Limits, QuotaExhausted, RateLimiter, RateLimitTimeout,
 )
-from multimodal_transcription_core.request_policy import (
+from multimodel_transcription_kit.request_policy import (
     is_daily_quota, retry_delay_from, send_with_limits,
 )
 
@@ -121,7 +121,7 @@ def test_per_minute_message_is_not_daily():
 
 
 def test_gemini_api_routes_requests_through_limiter():
-    from multimodal_transcription_core.gemini_client import GeminiAPI
+    from multimodel_transcription_kit.gemini_client import GeminiAPI
     clock = Clock()
     rl = RateLimiter({"gemini-3.5-flash-lite": Limits(rpd=1)}, clock=clock, sleep=clock.sleep)
     api = GeminiAPI(rate_limiter=rl)
@@ -133,5 +133,5 @@ def test_gemini_api_routes_requests_through_limiter():
 
 
 def test_flash_lite_is_a_known_model():
-    from multimodal_transcription_core.gemini_client import GeminiModel
+    from multimodel_transcription_kit.gemini_client import GeminiModel
     assert GeminiModel("gemini-3.5-flash-lite").value == "gemini-3.5-flash-lite"

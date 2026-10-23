@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from multimodal_transcription_core import audio_quality, engine, runner
-from multimodal_transcription_core.engine import ModelSpec
+from multimodel_transcription_kit import audio_quality, engine, runner
+from multimodel_transcription_kit.engine import ModelSpec
 
 pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires ffmpeg")
 
@@ -168,10 +168,10 @@ def test_loud_peaks_alone_are_limited_not_made_louder(tmp_path):
 
 def test_default_cache_folder_is_xdg_cache_home_then_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
-    assert audio_quality.default_cache_dir() == tmp_path / "xdg" / "transcription-core" / "enhanced"
+    assert audio_quality.default_cache_dir() == tmp_path / "xdg" / "multimodel-transcription-kit" / "enhanced"
     monkeypatch.delenv("XDG_CACHE_HOME")
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert audio_quality.default_cache_dir() == tmp_path / ".cache" / "transcription-core" / "enhanced"
+    assert audio_quality.default_cache_dir() == tmp_path / ".cache" / "multimodel-transcription-kit" / "enhanced"
 
 
 def test_no_enhance_still_assesses_but_creates_nothing(tmp_path, monkeypatch):

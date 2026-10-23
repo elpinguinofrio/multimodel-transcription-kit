@@ -9,7 +9,7 @@ Enable it in the CLI or quickstart configuration:
 
 ```ini
 [usage]
-file = ~/.local/state/transcription-core/usage.sqlite
+file = ~/.local/state/multimodel-transcription-kit/usage.sqlite
 ```
 
 Use a local disk, not SMB/NFS. Give every application on one machine the same
@@ -20,9 +20,9 @@ when the section is absent. The library discovers no configuration itself.
 Fetch totals, or individual requests, as JSON:
 
 ```sh
-transcription-core usage --config /path/to/transcription.ini
-transcription-core usage --config /path/to/transcription.ini --history
-transcription-core usage --db /path/to/usage.sqlite --provider gemini --since 2026-10-14T00:00:00Z
+multimodel-transcription-kit usage --config /path/to/transcription.ini
+multimodel-transcription-kit usage --config /path/to/transcription.ini --history
+multimodel-transcription-kit usage --db /path/to/usage.sqlite --provider gemini --since 2026-10-14T00:00:00Z
 ```
 
 History is oldest first, with `--limit 100` and `--offset 0` defaults. Increase
@@ -35,7 +35,7 @@ Queries do not load secrets or contact providers.
 For a future UI, use the same Python API:
 
 ```python
-from multimodal_transcription_core import UsageLog, GeminiAPI, GroqAPI
+from multimodel_transcription_kit import UsageLog, GeminiAPI, GroqAPI
 
 usage = UsageLog("/path/to/usage.sqlite")
 gemini = GeminiAPI(usage_log=usage)  # also accepts rate_limiter= independently
@@ -47,7 +47,7 @@ requests = usage.requests(limit=100, offset=0)
 ```
 
 For the raw HTTP CLI, pass `--usage-file /path/to/usage.sqlite` to
-`transcription-core http`. Every direct library caller must supply `usage_log=`;
+`multimodel-transcription-kit http`. Every direct library caller must supply `usage_log=`;
 passing only a limiter does not enable usage recording. Gemini Live uses the
 log supplied to its `GeminiAPI`.
 

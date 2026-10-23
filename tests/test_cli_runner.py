@@ -9,11 +9,11 @@ import sys
 
 import pytest
 
-from multimodal_transcription_core import runner
+from multimodel_transcription_kit import runner
 
 
 def test_cli_quickstart_respects_configured_daily_limit(tmp_path, capsys):
-    from multimodal_transcription_core.cli import main
+    from multimodel_transcription_kit.cli import main
     from test_engine import gateway, tone
 
     audio = tone(tmp_path / "clip.wav", 2)
@@ -47,7 +47,7 @@ def test_module_entry_point_preserves_transcription_failure_exit_status(tmp_path
     with gateway("http", statuses=(403,)) as (url, _):
         config.write_text("[models]\nranking = local\n[model.local]\nkind = http\nmodel = test\n"
                           f"endpoint = {url}/v1/audio/transcriptions\n")
-        result = subprocess.run([sys.executable, "-m", "multimodal_transcription_core", str(audio),
+        result = subprocess.run([sys.executable, "-m", "multimodel_transcription_kit", str(audio),
                                  "--config", str(config), "--no-enhance"],
                                 capture_output=True, text=True, timeout=20)
     assert result.returncode == 1, result.stderr
@@ -212,10 +212,10 @@ def test_library_import_does_not_read_the_root_config(monkeypatch, tmp_path):
     (tmp_path / "transcription.ini").write_text("[models]\nranking = poisoned\n")
     import importlib
 
-    import multimodal_transcription_core
+    import multimodel_transcription_kit
 
-    importlib.reload(multimodal_transcription_core)
-    assert not hasattr(multimodal_transcription_core, "ranking")
+    importlib.reload(multimodel_transcription_kit)
+    assert not hasattr(multimodel_transcription_kit, "ranking")
 
 
 LIMITED = CONFIG + """
@@ -258,7 +258,7 @@ def test_missing_config_points_at_the_committed_example(tmp_path, audio, monkeyp
 
 def test_committed_example_config_parses(capsys):
     from pathlib import Path
-    from multimodal_transcription_core.rate_limiter import RateLimiter
+    from multimodel_transcription_kit.rate_limiter import RateLimiter
     example = Path(__file__).resolve().parents[1] / "transcription.example.ini"
     limiter = RateLimiter.from_parser(runner.load_config(str(example)), state_path=None)
     assert limiter.limits["gemini-3.5-flash-lite"].rpd == 500
@@ -297,7 +297,7 @@ def test_model_prompt_overrides_defaults_prompt(tmp_path, audio, monkeypatch):
 
 
 def test_gemini_dispatch_passes_the_prompt(monkeypatch, audio):
-    from multimodal_transcription_core import gemini_client
+    from multimodel_transcription_kit import gemini_client
     calls = []
 
     class FakeGemini:

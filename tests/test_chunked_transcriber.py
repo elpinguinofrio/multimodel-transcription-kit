@@ -11,7 +11,7 @@ import importlib.util
 
 def _load_module(name: str):
     from importlib import import_module
-    return import_module(f"multimodal_transcription_core.{name}")
+    return import_module(f"multimodel_transcription_kit.{name}")
 
 
 # =============================================================================
@@ -294,7 +294,7 @@ class TestChunkedTranscriber:
     def test_parse_error_chunk_does_not_kill_other_chunks(self, tmp_path):
         """A failed part does not stop the others: they are transcribed and merged, and the
         partial result travels on IncompleteTranscriptError instead of as a success."""
-        from multimodal_transcription_core import IncompleteTranscriptError
+        from multimodel_transcription_kit import IncompleteTranscriptError
         run = self.run(tmp_path, 3600.0, [
             {"text": "[PARSE_ERROR] finishReason=PROHIBITED_CONTENT, NO CONTENT returned"},
             {"text": "Good chunk 2 content", "success": True}])

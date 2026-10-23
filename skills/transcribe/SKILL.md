@@ -1,11 +1,11 @@
 ---
 name: transcribe
-description: Transcribe an audio or video recording to text with the installed multimodal-transcription-core, using the best available configured model. Use when the user asks to transcribe a recording, get its text, or save a transcript.
+description: Transcribe an audio or video recording to text with the installed multimodel-transcription-kit, using the best available configured model. Use when the user asks to transcribe a recording, get its text, or save a transcript.
 ---
 
 # Transcribe a recording
 
-Runs the `transcription-core` command from the installed `multimodal-transcription-core`
+Runs the `multimodel-transcription-kit` command from the installed `multimodel-transcription-kit`
 package. Model choice, fallback, chunking, conversion, enhancement and rate limits are
 the library's job; do not reimplement them.
 
@@ -15,11 +15,11 @@ the library's job; do not reimplement them.
    from this machine. A missing PATH entry does not establish that the tool is absent.
    Try the installed command, then an explicit checkout-local launcher. Never activate a
    VM venv on the host: its Python paths can belong to the VM even on a shared disk.
-2. The checkout's `./transcription-core` launcher uses its private portable runtime,
+2. The checkout's `./multimodel-transcription-kit` launcher uses its private portable runtime,
    requiring no host Python, pip, uv, PATH registration or VM command connection.
    Run it with `--portable-info` and `--help` to confirm the runtime and paths. For video,
    also check the reported `ffmpeg` and `ffprobe`; startup alone does not prove transcription.
-   On the VM an already working native `.venv/bin/transcription-core` can still be used.
+   On the VM an already working native `.venv/bin/multimodel-transcription-kit` can still be used.
 3. Respect an explicit config. The portable launcher otherwise supplies its packaged
    configuration with paths resolved under the current shared root; do not pass a
    VM-only `~/.config/transcription` path on the host. A native installation uses the
@@ -31,11 +31,11 @@ the library's job; do not reimplement them.
 
 ## Run
 
-- Text to the conversation: `transcription-core "$AUDIO" --config "$CONFIG"`
-- Saved transcript: `transcription-core "$AUDIO" --config "$CONFIG" -d "$DIR"`
+- Text to the conversation: `multimodel-transcription-kit "$AUDIO" --config "$CONFIG"`
+- Saved transcript: `multimodel-transcription-kit "$AUDIO" --config "$CONFIG" -d "$DIR"`
   writes `<name>.<model>.md` beside earlier runs (`(2)`, `(3)`, ...); nothing is overwritten.
 
-Here `transcription-core` means the executable resolved above, which may be an
+Here `multimodel-transcription-kit` means the executable resolved above, which may be an
 absolute checkout path. Omit `--config` when using the portable packaged default.
 
 Pass only what the user asked for: `-m <model>` (exactly that model, no fallback),

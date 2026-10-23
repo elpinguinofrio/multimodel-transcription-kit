@@ -9,10 +9,10 @@ from unittest.mock import Mock
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import engine, runner
-from multimodal_transcription_core.engine import ModelSpec, resolve_features
-from multimodal_transcription_core.render import render_timestamps
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import engine, runner
+from multimodel_transcription_kit.engine import ModelSpec, resolve_features
+from multimodel_transcription_kit.render import render_timestamps
 
 GEMINI = ModelSpec(name="g", kind="gemini", model="gemini-3.5-flash-lite")
 GROQ = ModelSpec(name="w", kind="groq", model="whisper-large-v3")
@@ -229,7 +229,7 @@ def test_http_word_alignment_gives_timestamps(tmp_path, monkeypatch):
     audio.touch()
     monkeypatch.setattr(engine, "get_duration", lambda path: 10.0)
     monkeypatch.setattr(engine, "assess_audio", lambda path: {"problems": []})
-    from multimodal_transcription_core import http_client
+    from multimodel_transcription_kit import http_client
     monkeypatch.setattr(http_client, "transcribe", lambda *a, **kw: (
         {"text": "Как только.", "words": [{"word": "Как", "start": 0, "end": 0.2},
                                           {"word": "только.", "start": 0.2, "end": 0.5}]}, b"", 200, 0.1))

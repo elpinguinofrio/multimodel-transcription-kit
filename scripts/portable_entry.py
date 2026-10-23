@@ -36,10 +36,10 @@ def prepare_config(root, bundle, machine=None):
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     root = Path(__file__).resolve().parents[1]
-    bundle = root / '.private' / 'portable-macos-arm64'
+    bundle = root / '.private' / 'portable-macos-arm64-kit'
     sys.path.insert(0, str(bundle / 'site-packages'))
     if argv == ['--portable-info']:
-        import multimodal_transcription_core as core
+        import multimodel_transcription_kit as core
         manifest = json.loads((bundle / 'manifest.json').read_text())
         print(json.dumps({
             'machine': platform.node(), 'python': sys.executable,
@@ -60,7 +60,7 @@ def main(argv=None):
         tempfile.tempdir = str(work)
     if not help_only and not explicit and (not argv or argv[0] != 'http'):
         argv.extend(['--config', str(prepare_config(root, bundle))])
-    from multimodal_transcription_core.cli import main as cli_main
+    from multimodel_transcription_kit.cli import main as cli_main
     return cli_main(argv)
 
 

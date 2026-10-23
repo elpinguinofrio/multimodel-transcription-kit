@@ -32,7 +32,7 @@ needs a person. Check this list when something stops working after months untouc
   skip and failure is written into the transcript header (`skipped:` / `fallback:`). With `-m` there is no
   fallback: the run exits 1 and says why.
 - **Partial results are never lost:** `IncompleteTranscriptError.result` and `ReconstructionError.result`
-  carry what was transcribed; `transcription-core bench` writes a receipt for every attempt, failed or not.
+  carry what was transcribed; `multimodel-transcription-kit bench` writes a receipt for every attempt, failed or not.
 
 ## What needs a person, and how you will notice
 
@@ -40,10 +40,10 @@ needs a person. Check this list when something stops working after months untouc
 |---|---|---|
 | A model is retired or renamed | `--list-models` shows `not served (retired, renamed or misspelled?)`; runs show `HTTP 404 ... model not served` and fall back | update `model =` in the config; update the tier file if limits changed |
 | A key expires or is revoked | `--list-models` shows `... rejected`; runs show `credentials rejected` and fall back | replace the key in the env file named by `[secrets] env_file` |
-| Quotas change | `QuotaExhausted` earlier or later than expected | edit `src/multimodal_transcription_core/tiers/*.ini` or the model section |
+| Quotas change | `QuotaExhausted` earlier or later than expected | edit `src/multimodel_transcription_kit/tiers/*.ini` or the model section |
 | ffmpeg removed by an OS upgrade | `AudioPreparationError: ffmpeg is required` | reinstall ffmpeg |
 
-Run `transcription-core --list-models --config <config>` after any of these; it checks each model with a
+Run `multimodel-transcription-kit --list-models --config <config>` after any of these; it checks each model with a
 free metadata request (key accepted, model served) without transcribing anything. For `kind = http` it reads
 the server's `/v1/models` list: a listed model proves the server knows the name, not which model answered a
 given request. A server without that list is reported as answering but unverified.
@@ -62,8 +62,8 @@ python -m build --wheel        # build the installable package
 ```
 
 Install the resulting wheel into a disposable consumer environment, then run
-`transcription-core --help`, `transcription-core bench --help`, and
-`transcription-core http --help` from outside the source tree. Check dependencies
+`multimodel-transcription-kit --help`, `multimodel-transcription-kit bench --help`, and
+`multimodel-transcription-kit http --help` from outside the source tree. Check dependencies
 with `python -m pip check`. Keep shared host/VM validation artifacts under the
 shared root, in a new ignored `.private/` run directory.
 

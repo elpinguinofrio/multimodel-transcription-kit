@@ -8,7 +8,7 @@ Old form (one raw HTTP request with request/response files) still works:
 """
 import sys
 
-from multimodal_transcription_core import bench, http_client
+from multimodel_transcription_kit import bench, http_client
 
 if __name__ == "__main__":
     if "--endpoint" in sys.argv[1:]:

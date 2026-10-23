@@ -1,4 +1,4 @@
-Product — Multimodal Transcription Core
+Product — Multimodel Transcription Kit
 
 Human-owned. Agents must never edit this file. Suggest changes in chat;
 the owner edits it. Generated designs, roadmaps, and plans must preserve

@@ -61,7 +61,7 @@ After the Codex code review:
 ### Task 1: `RateLimiter` with shared SQLite state
 
 **Files:**
-- Create: `src/multimodal_transcription_core/rate_limiter.py`
+- Create: `src/multimodel_transcription_kit/rate_limiter.py`
 - Test: `tests/test_rate_limiter.py`
 
 **Interfaces:**
@@ -88,7 +88,7 @@ from datetime import datetime
 
 import pytest
 
-from multimodal_transcription_core.rate_limiter import (
+from multimodel_transcription_kit.rate_limiter import (
     Limits, QuotaExhausted, RateLimiter, RateLimitTimeout, QUOTA_DAY_TZ,
     estimate_audio_tokens, next_quota_reset, parse_count,
 )
@@ -293,7 +293,7 @@ def test_estimate_audio_tokens_uses_32_per_second():
 Run: `.venv/bin/python -m pytest tests/test_rate_limiter.py -q`
 Expected: collection error `ModuleNotFoundError: ... rate_limiter`
 
-- [ ] **Step 3: Implement** — `src/multimodal_transcription_core/rate_limiter.py`
+- [ ] **Step 3: Implement** — `src/multimodel_transcription_kit/rate_limiter.py`
 
 ```python
 """Shared request queue that keeps every caller under provider limits.
@@ -540,7 +540,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit** (only when the owner authorizes commits)
 
 ```bash
-git add src/multimodal_transcription_core/rate_limiter.py tests/test_rate_limiter.py
+git add src/multimodel_transcription_kit/rate_limiter.py tests/test_rate_limiter.py
 git commit -m "feat: shared rate limiter with per-minute, token and daily limits"
 ```
 
@@ -549,8 +549,8 @@ git commit -m "feat: shared rate limiter with per-minute, token and daily limits
 ### Task 2: Shared send loop `send_with_limits`, used by `GeminiAPI`
 
 **Files:**
-- Create: `src/multimodal_transcription_core/request_policy.py`
-- Modify: `src/multimodal_transcription_core/gemini_client.py` (`GeminiModel`, `__init__`, `_post_with_retry`, `speech_to_text` throttle block ~line 679-704, `generate_text` ~line 830-870)
+- Create: `src/multimodel_transcription_kit/request_policy.py`
+- Modify: `src/multimodel_transcription_kit/gemini_client.py` (`GeminiModel`, `__init__`, `_post_with_retry`, `speech_to_text` throttle block ~line 679-704, `generate_text` ~line 830-870)
 - Test: `tests/test_request_policy.py`, existing `tests/test_gemini_client.py` must stay green
 
 **Interfaces:**
@@ -570,8 +570,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from multimodal_transcription_core.rate_limiter import Limits, QuotaExhausted, RateLimiter
-from multimodal_transcription_core.request_policy import (
+from multimodel_transcription_kit.rate_limiter import Limits, QuotaExhausted, RateLimiter
+from multimodel_transcription_kit.request_policy import (
     is_daily_quota, retry_delay_from, send_with_limits,
 )
 
@@ -665,7 +665,7 @@ def test_endless_429_gives_up_and_returns_response():
 
 
 def test_gemini_api_routes_requests_through_limiter():
-    from multimodal_transcription_core.gemini_client import GeminiAPI
+    from multimodel_transcription_kit.gemini_client import GeminiAPI
     clock = Clock()
     rl = RateLimiter({"gemini-3.5-flash-lite": Limits(rpd=1)}, clock=clock, sleep=clock.sleep)
     api = GeminiAPI(rate_limiter=rl)
@@ -677,7 +677,7 @@ def test_gemini_api_routes_requests_through_limiter():
 
 
 def test_flash_lite_is_a_known_model():
-    from multimodal_transcription_core.gemini_client import GeminiModel
+    from multimodel_transcription_kit.gemini_client import GeminiModel
     assert GeminiModel("gemini-3.5-flash-lite").value == "gemini-3.5-flash-lite"
 ```
 
@@ -862,9 +862,9 @@ Expected: all pass (existing retry tests keep passing because `sleep` is resolve
 ### Task 3: Merge path and public `transcribe*` functions honour the limiter
 
 **Files:**
-- Modify: `src/multimodal_transcription_core/chunked_transcriber.py` (`_standard_transcribe`, `ChunkedMergeAPI.generate_text`, `transcribe_large`)
-- Modify: `src/multimodal_transcription_core/transcriber.py` (`transcribe`)
-- Modify: `src/multimodal_transcription_core/__init__.py` (exports)
+- Modify: `src/multimodel_transcription_kit/chunked_transcriber.py` (`_standard_transcribe`, `ChunkedMergeAPI.generate_text`, `transcribe_large`)
+- Modify: `src/multimodel_transcription_kit/transcriber.py` (`transcribe`)
+- Modify: `src/multimodel_transcription_kit/__init__.py` (exports)
 - Test: `tests/test_limited_transcription.py`; existing chunked tests stay green
 
 **Interfaces:**
@@ -879,8 +879,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import multimodal_transcription_core as core
-from multimodal_transcription_core import chunked_transcriber, transcriber
+import multimodel_transcription_kit as core
+from multimodel_transcription_kit import chunked_transcriber, transcriber
 
 
 def test_package_exports_limiter_types():
@@ -1011,7 +1011,7 @@ Expected: all pass.
 ### Task 4: Groq client uses the same policy
 
 **Files:**
-- Modify: `src/multimodal_transcription_core/groq_client.py` (`__init__`, request block ~line 186-210)
+- Modify: `src/multimodel_transcription_kit/groq_client.py` (`__init__`, request block ~line 186-210)
 - Test: `tests/test_groq_limits.py`
 
 **Interfaces:**
@@ -1026,7 +1026,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from multimodal_transcription_core import GroqAPI, Limits, RateLimiter
+from multimodel_transcription_kit import GroqAPI, Limits, RateLimiter
 
 
 def resp(status, body, headers=None):
@@ -1050,7 +1050,7 @@ def test_groq_retry_resends_full_audio(tmp_path):
         return resp(200, {"text": "привет"})
 
     with patch("requests.post", side_effect=fake_post), patch("time.sleep") as sleep, \
-         patch("multimodal_transcription_core.audio_converter.AudioConverter.get_audio_duration",
+         patch("multimodel_transcription_kit.audio_converter.AudioConverter.get_audio_duration",
                return_value=1.0):
         out = GroqAPI(retry_base_delay=0).speech_to_text(str(audio))
     assert out["text"] == "привет"
@@ -1063,7 +1063,7 @@ def test_groq_counts_against_the_limiter(tmp_path):
     audio.write_bytes(b"RIFF" + b"\0" * 64)
     rl = RateLimiter({"whisper-large-v3": Limits(rpd=5)})
     with patch("requests.post", return_value=resp(200, {"text": "x"})), \
-         patch("multimodal_transcription_core.audio_converter.AudioConverter.get_audio_duration",
+         patch("multimodel_transcription_kit.audio_converter.AudioConverter.get_audio_duration",
                return_value=1.0):
         GroqAPI(rate_limiter=rl).speech_to_text(str(audio))
     assert rl.usage("whisper-large-v3")["today"] == 1
@@ -1105,7 +1105,7 @@ Run: `.venv/bin/python -m pytest tests/test_groq_limits.py -q` → pass.
 ### Task 5: CLI reads limits from `transcription.ini` and shows usage
 
 **Files:**
-- Modify: `src/multimodal_transcription_core/runner.py` (`transcribe_with_model`, `main`)
+- Modify: `src/multimodel_transcription_kit/runner.py` (`transcribe_with_model`, `main`)
 - Modify: `tests/test_cli_runner.py` (stub accepts `limiter`; new tests)
 - Modify: `transcription.ini`, `examples/quickstart/config.ini` (add `[limits]` and rpm/tpm/rpd)
 
@@ -1180,7 +1180,7 @@ Config (`transcription.ini`, and the same shape in `examples/quickstart/config.i
 [limits]
 # Local disk only - never /Volumes/VM-shared: SQLite locks are unreliable on SMB.
 # Every app and run that names this file shares one queue.
-state_file = ~/.local/state/transcription-core/ratelimit.sqlite
+state_file = ~/.local/state/multimodel-transcription-kit/ratelimit.sqlite
 # Longest a request may wait for a slot before failing with RateLimitTimeout.
 max_wait_seconds = 3600
 
@@ -1220,11 +1220,11 @@ rsync -a --exclude .venv --exclude .git --exclude '__pycache__' ./ "$SCRATCH/exp
 python3 -m venv "$SCRATCH/wheel-venv" && "$SCRATCH/wheel-venv/bin/pip" install build
 "$SCRATCH/wheel-venv/bin/python" -m build --wheel "$SCRATCH/export" --outdir "$SCRATCH/dist"
 python3 -m venv "$SCRATCH/smoke" && "$SCRATCH/smoke/bin/pip" install "$SCRATCH"/dist/*.whl
-cd "$SCRATCH" && "$SCRATCH/smoke/bin/transcription-core" --list-models --config <repo>/transcription.ini
-"$SCRATCH/smoke/bin/python" -c "import multimodal_transcription_core as c; print(c.RateLimiter)"
+cd "$SCRATCH" && "$SCRATCH/smoke/bin/multimodel-transcription-kit" --list-models --config <repo>/transcription.ini
+"$SCRATCH/smoke/bin/python" -c "import multimodel_transcription_kit as c; print(c.RateLimiter)"
 ```
 
 Expected: tests pass; wheel installs; `--list-models` prints `today N/500` for flash-lite.
 
-- [ ] **Step 3: One live smoke (1 of 500 Flash Lite requests)** — generate a 3-second Russian clip with macOS `say`, convert to m4a with ffmpeg, run `transcription-core <clip> -m gemini-3.5-flash-lite --config transcription.ini`, then `--list-models` to show the request counted. Not a benchmark; benchmark files untouched.
+- [ ] **Step 3: One live smoke (1 of 500 Flash Lite requests)** — generate a 3-second Russian clip with macOS `say`, convert to m4a with ffmpeg, run `multimodel-transcription-kit <clip> -m gemini-3.5-flash-lite --config transcription.ini`, then `--list-models` to show the request counted. Not a benchmark; benchmark files untouched.
 - [ ] **Step 4: Inspect diff** (`git diff --stat`, `git status --short`) and confirm `benchmark/` unchanged.
