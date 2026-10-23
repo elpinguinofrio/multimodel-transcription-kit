@@ -134,8 +134,8 @@ Install the new wheel into each consumer environment and update its imports or
 subprocess command to these canonical names. The checkout folder is
 `projects/multimodel-transcription-kit` under the designated shared root.
 `transcription.ini` and `transcription.example.ini` remain the configuration names.
-Install from the checkout or a built wheel while the owner handles the GitHub
-repository rename separately. The local Git remote is left unchanged.
+The GitHub repository is `elpinguinofrio/multimodel-transcription-kit`; the old
+`multimodal-transcription-core` URL redirects to it.
 
 Exocortex and Clip Smith have not yet migrated their runtime transcription paths
 to this library. Their repository READMEs link the current integration handoff.
