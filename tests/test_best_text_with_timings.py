@@ -139,3 +139,18 @@ def test_cli_reads_timing_ranking_from_config(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "transcribe_with_model", transcribe_with_model)
     assert runner.main([str(audio), "--config", str(config), "--timestamps", "phrase"]) == 0
     assert calls == ["gemini", "parakeet"]
+
+
+def test_native_timing_model_also_fills_result_words():
+    # Callers read only result["text"] and result["words"], whichever model ran.
+    calls = []
+    result = selection.transcribe_best("x.wav", [WHISPER, GEMINI], probe=lambda s: True,
+                                       transcribe=fake(calls), timestamps="phrase")
+    assert calls == [("whisper", "phrase", True)]
+    assert [(w["word"], w["start"], w["end"]) for w in result["words"]] == [
+        ("Привет", 10.0, 10.5), ("ChachaGPT", 10.6, 11.2), ("и", 11.3, 11.4), ("клоу", 11.5, 12.0)]
+
+
+def test_no_timestamps_requested_leaves_words_unset():
+    result = selection.transcribe_best("x.wav", [WHISPER], probe=lambda s: True, transcribe=fake([]))
+    assert "words" not in result

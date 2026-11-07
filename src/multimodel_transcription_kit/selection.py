@@ -79,6 +79,13 @@ def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow
                 result = transcribe(audio, spec, limiter=limiter, **{**options, "timestamps": "none"})
                 result = _add_times(audio, result, spec, specs if timing_specs is None else timing_specs,
                                     probe, transcribe, limiter, options)
+            elif features["timestamps"] not in (None, "none"):
+                # Native word times: expose them as result["words"] too, so callers never
+                # need to know which model ran or where its raw response keeps them.
+                result = transcribe(audio, spec, limiter=limiter, **{**options, "keep_raw": True})
+                if "words" not in result:
+                    from .alignment import timed_words
+                    result["words"] = timed_words({"parts": result.get("parts")})
             else:
                 result = transcribe(audio, spec, limiter=limiter, **options)
         except _INPUT_ERRORS:
