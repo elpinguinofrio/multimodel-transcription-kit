@@ -15,4 +15,13 @@ if [ ! -x "$python" ]; then
     echo "multimodel-transcription-kit: shared portable runtime is missing; build it with scripts/build_portable.py" >&2
     exit 1
 fi
+# macOS kills unsigned binaries on a quarantined mount (the VM's SMB share) and shows a
+# malware dialog for each attempt. Refuse here instead of launching.
+if [ "$(uname)" = Darwin ]; then
+    mountpoint=$(df -P "$python" | awk 'NR==2 {print $6}')
+    if mount | grep -F " on $mountpoint (" | grep -q quarantine; then
+        echo "multimodel-transcription-kit: $mountpoint is mounted with quarantine, so macOS would block the shared runtime; run on the host" >&2
+        exit 1
+    fi
+fi
 exec "$python" -I "$root/scripts/portable_entry.py" "$@"

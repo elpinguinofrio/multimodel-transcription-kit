@@ -33,13 +33,16 @@ def describe_error(error):
     return f"{text} - {hint}" if hint else text
 
 
-def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow_fallback=True, **options):
+def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow_fallback=True,
+                    timing_specs=None, **options):
     """Transcribe with the first suitable model in ``specs`` (best first).
 
     ``probe(spec)`` says whether a model is reachable now (bool or Availability).
     ``options`` go to ``transcribe`` (default engine.transcribe_file), including
     ``limiter``. Raises NoModelAvailableError listing every attempt when no model
     succeeds; with allow_fallback=False the first model's own error propagates.
+    ``timing_specs`` (best first) supply word times when the chosen text model cannot;
+    default: the timestamp-capable models of ``specs`` in their order.
     """
     from .engine import resolve_features
     if transcribe is None:
@@ -52,18 +55,32 @@ def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow
             available = Availability(bool(available), "" if available else "not reachable")
         exhausted = limiter.exhausted(spec.model) if limiter is not None and available.ok else None
         reason = available.reason if not available.ok else exhausted and f"quota: {exhausted}"
+        borrow_times = False
         if not reason:
             try:
                 resolve_features(spec, **features)
             except UnsupportedFeatureError as error:
                 reason = str(error)
+                # Owner decision (2026-11-07): word times never demote the text to a weaker
+                # model. The best model writes the text; a timing model supplies only times.
+                if features["timestamps"] not in (None, "none") and "timestamps" not in spec.supports:
+                    try:
+                        resolve_features(spec, **{**features, "timestamps": "none"})
+                        reason, borrow_times = "", True
+                    except UnsupportedFeatureError:
+                        pass
         if reason:
             if not allow_fallback:
                 raise NoModelAvailableError(f"{spec.name}: {reason}", attempts=[{"name": spec.name, "skipped": reason}])
             attempts.append({"name": spec.name, "skipped": reason})
             continue
         try:
-            result = transcribe(audio, spec, limiter=limiter, **options)
+            if borrow_times:
+                result = transcribe(audio, spec, limiter=limiter, **{**options, "timestamps": "none"})
+                result = _add_times(audio, result, spec, specs if timing_specs is None else timing_specs,
+                                    probe, transcribe, limiter, options)
+            else:
+                result = transcribe(audio, spec, limiter=limiter, **options)
         except _INPUT_ERRORS:
             raise
         except (TranscriptionError, RateLimitError) as error:
@@ -75,6 +92,37 @@ def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow
         return result
     summary = "; ".join(f"{a['name']}: {a.get('skipped') or a.get('error')}" for a in attempts)
     raise NoModelAvailableError(f"no model could transcribe: {summary or 'none configured'}", attempts=attempts)
+
+
+def _add_times(audio, result, text_spec, specs, probe, transcribe, limiter, options):
+    """Align ``result``'s text onto word times from the best timing-capable model."""
+    from .alignment import align_words, timed_words
+    from .engine import _segments
+    from .render import render_timestamps
+    timing_specs = [s for s in specs if s is not text_spec and "timestamps" in s.supports]
+    try:
+        timing = transcribe_best(audio, timing_specs, probe=probe, transcribe=transcribe, limiter=limiter,
+                                 allow_fallback=True, **{**options, "keep_raw": True})
+    except NoModelAvailableError as error:
+        raise NoModelAvailableError(f"{text_spec.name} cannot align words and no timing model could: {error}",
+                                    attempts=error.attempts) from error
+    if result.get("no_speech"):
+        words = []
+    else:
+        words = align_words(result.get("plain_text", result["text"]), timed_words(timing))
+        if not words:
+            raise UnsupportedFeatureError(f"timing model {timing.get('name')} returned no word times")
+        segments = _segments(None, words)
+        result["segments"] = segments
+        result["text"] = render_timestamps(segments, options["timestamps"])
+    result["words"] = words
+    result["features"] = {**(result.get("features") or {}), "timestamps": options["timestamps"]}
+    result["alignment"] = {
+        "text_model": text_spec.name, "timing_model": timing.get("name"),
+        "matched": sum(w["aligned"] == "matched" for w in words), "words": len(words),
+        "timing_selection": timing.get("selection"), "timing_text": timing.get("plain_text", timing.get("text")),
+        "timing_parts": timing.get("parts")}
+    return result
 
 
 def _remote(url, headers, timeout):

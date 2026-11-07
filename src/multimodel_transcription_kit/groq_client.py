@@ -216,6 +216,8 @@ class STTAPI:
             "model": model_name,
             "response_format": response_format,
         }
+        if response_format == "verbose_json":
+            data["timestamp_granularities[]"] = ["word", "segment"]
         # Only include language if explicitly specified (omit for auto-detect)
         if language:
             data["language"] = language

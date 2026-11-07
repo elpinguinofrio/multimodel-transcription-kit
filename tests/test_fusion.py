@@ -141,6 +141,47 @@ def test_cli_fuse_writes_individual_and_fused_documents(cli, tmp_path, capsys):
     assert fused.endswith("\n\nwords from fused\n")
 
 
+def test_cli_fuse_receipt_writes_one_receipt_per_transcript(cli, tmp_path, monkeypatch):
+    audio, config, _ = cli
+    fake, seen_kwargs = transcriber(fail={"c"}), []
+
+    def transcribe_with_model(name, options, audio, language, **kw):
+        seen_kwargs.append(kw)
+        return fake(audio, runner.model_spec(None, name, options))
+    monkeypatch.setattr(runner, "transcribe_with_model", transcribe_with_model)
+    out = tmp_path / "out"
+    out.mkdir()
+    argv = [str(audio), "--config", str(config), "-d", str(out), "--fuse", "a,b,c", "--receipt"]
+    assert runner.main(argv) == 0
+    assert sorted(p.name for p in out.iterdir()) == [
+        "talk.a.md", "talk.a.receipt.json", "talk.b.md", "talk.b.receipt.json",
+        "talk.fused.md", "talk.fused.receipt.json"]
+    assert all(kw.get("keep_raw") is True for kw in seen_kwargs)       # raw responses kept
+    member = json.loads((out / "talk.a.receipt.json").read_text())
+    assert member["spec"]["name"] == "a" and member["transcript_file"] == "talk.a.md"
+    assert member["argv"] == argv and "keep_raw" not in member["options"]
+    fused = json.loads((out / "talk.fused.receipt.json").read_text())
+    assert fused["transcript_file"] == "talk.fused.md" and fused["argv"] == argv
+    assert fused["fusion"]["status"] == "fused" and fused["fusion"]["model"] == "gemini-3.6-flash"
+    assert fused["fusion"]["inputs"] == ["a", "b"] and fused["fusion"]["failures"][0]["name"] == "c"
+    assert fused["inputs"] == {"a": "talk.a.receipt.json", "b": "talk.b.receipt.json"}
+    assert fused["text"] == "words from fused"
+
+
+def test_cli_fuse_prints_each_member_warning(cli, tmp_path, monkeypatch, capsys):
+    audio, config, _ = cli
+
+    def transcribe_with_model(name, options, audio, language, **kw):
+        return {"text": f"words from {name}", "name": name, "warnings": [f"{name} cannot supply speaker labels"]}
+    monkeypatch.setattr(runner, "transcribe_with_model", transcribe_with_model)
+    out = tmp_path / "out"
+    out.mkdir()
+    assert runner.main([str(audio), "--config", str(config), "-d", str(out), "--fuse", "a,b"]) == 0
+    err = capsys.readouterr().err
+    assert "warning: a cannot supply speaker labels" in err
+    assert "warning: b cannot supply speaker labels" in err
+
+
 def test_cli_fuse_needs_a_destination(cli):
     audio, config, _ = cli
     with pytest.raises(SystemExit):

@@ -112,7 +112,8 @@ and the [roadmap](docs/roadmap.md). Older implementation plans under
 ## Audio terms
 
 Code and documentation are [MIT licensed](LICENSE). The license does **not** cover
-`benchmark/samples/120s-diary-ru/120s-diary-ru.wav`. That recording is supplied for
+`benchmark/samples/120s-diary-ru/120s-diary-ru.wav` or
+`benchmark/samples/101s-codexbar-ru/101s-codexbar-ru.wav`. These recordings are supplied for
 inspection and reproduction of this benchmark. No general-purpose data license
 is granted. Contact the owner for other reuse, redistribution, training or voice
 synthesis. Public availability is not consent to impersonation.

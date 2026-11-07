@@ -6,6 +6,12 @@
       "sha256": "9d828345ddfb9ddb48f8ad797b147bc3362d71fd77c0044d757b610f63a3e6d5",
       "duration_seconds": 120.0,
       "terms": "README.md#audio-terms"
+    },
+    {
+      "path": "benchmark/samples/101s-codexbar-ru/101s-codexbar-ru.wav",
+      "sha256": "fc17c7f0d1587753b6d8f521bdfc48cafbc03185c5de244a99a7c2b8f327e6c5",
+      "duration_seconds": 101.72662131519274,
+      "terms": "README.md#audio-terms"
     }
   ]
 }

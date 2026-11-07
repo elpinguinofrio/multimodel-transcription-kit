@@ -33,7 +33,8 @@ def build_receipt(result, spec, options, **extra):
     """A JSON-ready receipt: the model spec, the options passed, input identity,
     client version, what actually ran, and (when kept) each part's raw response."""
     keys = ("text", "segments", "features", "settings", "warnings", "boundaries", "chunks", "duration",
-            "processing_time", "input_tokens", "output_tokens", "no_speech", "success", "selection")
+            "processing_time", "input_tokens", "output_tokens", "no_speech", "success", "selection",
+            "words", "alignment")
     return {
         "schema": 1,
         "recorded_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

@@ -11,6 +11,7 @@ import json
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -47,6 +48,13 @@ def load_secrets(config):
 def ranked_models(config):
     """Model names best-first, as the owner ordered them in the config."""
     raw = config.get("models", "ranking", fallback="")
+    names = [name.strip() for name in raw.split(",") if name.strip()]
+    return [name for name in names if config.has_section(f"model.{name}")]
+
+
+def timing_models(config):
+    """Word-timing models best-first ([models] timing_ranking); empty means use the ranking."""
+    raw = config.get("models", "timing_ranking", fallback="")
     names = [name.strip() for name in raw.split(",") if name.strip()]
     return [name for name in names if config.has_section(f"model.{name}")]
 
@@ -205,12 +213,25 @@ def render_fused_document(audio, fused, written):
     return f"src: {Path(audio).resolve()}\n" + "\n".join(header) + f"\n\n{fused['text'].strip()}\n"
 
 
-def _run_fusion(args, config, names, limiter, usage_log):
+def _write_receipt(transcript, receipt):
+    """Write ``receipt`` as <transcript stem>.receipt.json beside the transcript; never overwrite."""
+    path = transcript.with_name(transcript.name[:-len(".md")] + ".receipt.json")
+    with open(path, "x", encoding="utf-8") as handle:
+        json.dump(receipt, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    return path
+
+
+def _run_fusion(args, config, names, limiter, usage_log, argv):
     from . import fusion
     language = args.language or config.get("defaults", "language", fallback=None)
     options_by_name = {name: model_options(config, name) for name in names}
     specs = [model_spec(config, name, options_by_name[name]) for name in names]
     model = config.get("fusion", "model", fallback=fusion.FUSION_MODEL)
+    settings = _settings(args, config)
+    receipt_options = {"language": language, **settings}
+    if args.receipt:
+        settings["keep_raw"] = True
 
     def run_model(audio, spec, limiter=None, **kwargs):
         return transcribe_with_model(spec.name, options_by_name[spec.name], audio, language,
@@ -219,22 +240,35 @@ def _run_fusion(args, config, names, limiter, usage_log):
         fused = fusion.transcribe_fused(
             args.audio, specs, fuse_texts=fusion.gemini_fuser(model, limiter=limiter, usage_log=usage_log),
             transcribe=run_model, probe=lambda spec: is_reachable(spec.name, options_by_name[spec.name]),
-            limiter=limiter, fusion_model=model, **_settings(args, config))
+            limiter=limiter, fusion_model=model, **settings)
         error = None
     except NoModelAvailableError as exc:
         print(f"multimodel-transcription-kit: {exc}", file=sys.stderr)
         return 1
     except FusionError as exc:
         fused, error = {"individual": exc.individual}, exc
-    written = []
+    written, receipts = [], {}
     for result in fused["individual"]:
+        for warning in result.get("warnings", []):
+            print(f"multimodel-transcription-kit: warning: {warning}", file=sys.stderr)
         path = write_transcript(args.destination, args.audio, result["name"], render_document(args.audio, result))
         written.append((result["name"], path))
         print(path, file=sys.stderr)
+        if args.receipt:
+            from .receipts import build_receipt
+            spec = next(s for s in specs if s.name == result["name"])
+            receipt = build_receipt(result, spec, receipt_options, argv=argv, transcript_file=path.name)
+            receipts[result["name"]] = _write_receipt(path, receipt).name
     if error is not None:
         print(f"multimodel-transcription-kit: {error}; the individual transcripts are kept", file=sys.stderr)
         return 1
     path = write_transcript(args.destination, args.audio, "fused", render_fused_document(args.audio, fused, written))
+    if args.receipt:
+        from .receipts import client_info
+        _write_receipt(path, {
+            "schema": 1, "recorded_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "client": client_info(), "options": receipt_options, "fusion": fused["fusion"],
+            "inputs": receipts, "text": fused["text"], "argv": argv, "transcript_file": path.name})
     for failure in fused["fusion"]["failures"]:
         print(f"multimodel-transcription-kit: {failure['name']}: {failure['error']}", file=sys.stderr)
     print(path, file=sys.stderr)
@@ -292,7 +326,7 @@ def main(argv=None):
         unknown = [name for name in names if model_options(config, name) is None]
         if unknown or len(names) < 2:
             parser.error(f"--fuse needs at least two configured models; unknown: {', '.join(unknown) or 'none'}")
-        return _run_fusion(args, config, names, limiter, usage_log)
+        return _run_fusion(args, config, names, limiter, usage_log, list(sys.argv[1:] if argv is None else argv))
 
     if args.model:
         options = model_options(config, args.model)
@@ -303,8 +337,10 @@ def main(argv=None):
         candidates = [args.model]
     else:
         candidates = ranking
-    options_by_name = {name: model_options(config, name) for name in candidates}
+    timing_names = timing_models(config)
+    options_by_name = {name: model_options(config, name) for name in [*candidates, *timing_names]}
     specs = [model_spec(config, name, options_by_name[name]) for name in candidates]
+    timing_specs = [model_spec(config, name, options_by_name[name]) for name in timing_names] or None
 
     language = args.language or config.get("defaults", "language", fallback=None)
     settings = _settings(args, config)
@@ -320,7 +356,8 @@ def main(argv=None):
     from .selection import describe_error, transcribe_best
     try:
         result = transcribe_best(args.audio, specs, probe=lambda spec: is_reachable(spec.name, options_by_name[spec.name]),
-                                 transcribe=run_model, limiter=limiter, allow_fallback=not args.model, **settings)
+                                 transcribe=run_model, limiter=limiter, allow_fallback=not args.model,
+                                 timing_specs=timing_specs, **settings)
     except NoModelAvailableError as error:
         if not any("error" in attempt for attempt in error.attempts):
             parser.error(f"No configured model is available; check keys, endpoints and quota ({error})")
@@ -349,10 +386,7 @@ def main(argv=None):
         options = {"language": language, **{k: v for k, v in settings.items() if k != "keep_raw"}}
         receipt = build_receipt(result, spec, options, argv=list(sys.argv[1:] if argv is None else argv),
                                 transcript_file=written.name)
-        path = written.with_name(written.name[:-len(".md")] + ".receipt.json")
-        with open(path, "x", encoding="utf-8") as handle:
-            json.dump(receipt, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
+        path = _write_receipt(written, receipt)
         print(path, file=sys.stderr)
     return 0
 
