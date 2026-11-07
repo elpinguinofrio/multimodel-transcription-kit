@@ -93,3 +93,13 @@ def test_cli_reads_vocabulary_from_config_and_flags(tmp_path, monkeypatch, audio
                         "--correction", "клоу -> Claude"]) == 0
     assert seen["terms"] == ["вайбкодинг", "Claude", "OpenClaw"]
     assert seen["corrections"] == [("веб-кодинг", "вайбкодинг"), ("клоу", "Claude")]
+
+
+def test_example_config_fixes_brand_mishearings_seen_on_the_codexbar_sample():
+    import configparser
+    from pathlib import Path
+    config = configparser.ConfigParser()
+    config.read(Path(__file__).resolve().parents[1] / "transcription.example.ini", encoding="utf-8")
+    fixes = parse_corrections(config["vocabulary"]["corrections"])
+    line = "мы не можем продолжать задачу в чат-GPT, да, или в Клоде."
+    assert correct(line, fixes)[0] == "мы не можем продолжать задачу в ChatGPT, да, или в Claude."
