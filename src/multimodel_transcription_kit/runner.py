@@ -183,6 +183,11 @@ def build_parser():
                         help="With -d, also write <transcript>.receipt.json: spec, options, client "
                              "version, input hash and raw provider responses")
     parser.add_argument("--list-models", action="store_true", help="Show the ranking and what is reachable now")
+    parser.add_argument("--term", action="append", default=[],
+                        help="A term the speaker uses, sent to the model as a spelling hint; adds to "
+                             "[vocabulary] terms (repeat)")
+    parser.add_argument("--correction", action="append", default=[],
+                        help="'heard -> right' fix for a known mishearing; adds to [vocabulary] corrections (repeat)")
     return parser
 
 
@@ -198,6 +203,15 @@ def _settings(args, config):
     enhanced_dir = config.get("defaults", "enhanced_dir", fallback=None)
     if enhanced_dir:
         settings["enhanced_dir"] = str(Path(enhanced_dir).expanduser())
+    from .vocabulary import parse_corrections, parse_terms
+    terms = parse_terms(config.get("vocabulary", "terms", fallback="")) + list(args.term or [])
+    corrections = parse_corrections(config.get("vocabulary", "corrections", fallback=""))
+    for item in args.correction or []:
+        corrections += parse_corrections(item)
+    if terms:
+        settings["terms"] = terms
+    if corrections:
+        settings["corrections"] = corrections
     return settings
 
 
@@ -247,6 +261,9 @@ def _run_fusion(args, config, names, limiter, usage_log, argv):
         return 1
     except FusionError as exc:
         fused, error = {"individual": exc.individual}, exc
+    if error is None and settings.get("corrections"):
+        from .vocabulary import correct
+        fused["text"], fused["fusion"]["corrections"] = correct(fused["text"], settings["corrections"])
     written, receipts = [], {}
     for result in fused["individual"]:
         for warning in result.get("warnings", []):

@@ -235,6 +235,11 @@ def _segments(raw, words=None):
     return out
 
 
+def _with_hint(settings):
+    """A Whisper-style prompt: the caller's prompt, then the vocabulary terms."""
+    return " ".join(p for p in (settings["prompt"], settings.get("hint")) if p) or None
+
+
 def _request(spec, path, settings, clients):
     """One provider request through its existing client; the common result shape back."""
     if spec.kind == "gemini" and spec.live:
@@ -244,18 +249,21 @@ def _request(spec, path, settings, clients):
         return result
     if spec.kind == "gemini":
         # A configured Gemini prompt is the whole instruction, not an addition to the built-in one.
+        full_prompt, extra = settings["prompt"], settings.get("hint") or None
+        if full_prompt and extra:
+            full_prompt, extra = f"{full_prompt.strip()} {extra}", None
         return clients.gemini.speech_to_text(
-            str(path), model=spec.model, language=settings["language"], full_prompt=settings["prompt"],
+            str(path), model=spec.model, language=settings["language"], full_prompt=full_prompt, prompt=extra,
             temperature=settings["temperature"], diarize=settings["features"]["speakers"],
             sounds=settings["features"]["sounds"], response_format="json" if settings["keep_raw"] else "text")
     if spec.kind == "groq":
         result = clients.groq.speech_to_text(str(path), model=spec.model, language=settings["language"],
-                                             prompt=settings["prompt"], response_format="verbose_json")
+                                             prompt=_with_hint(settings), response_format="verbose_json")
         result["segments"] = _segments(result.get("segments"), result.get("words"))
         return result
     from .http_client import transcribe as http_transcribe
     parsed, _, _, seconds = http_transcribe(
-        path, spec.endpoint, model=spec.model, language=settings["language"], prompt=settings["prompt"],
+        path, spec.endpoint, model=spec.model, language=settings["language"], prompt=_with_hint(settings),
         timeout=clients.timeout or 3600, limiter=clients.limiter, usage_log=clients.usage_log,
         max_retries=clients.max_retries, base_delay=clients.retry_base_delay)
     usage = usage_fields(parsed)
@@ -307,7 +315,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
                     speakers=None, sounds=None, timestamps=None, enhance=None, enhanced_dir=None,
                     keep_enhanced=False, overlap_seconds=OVERLAP_SECONDS, limiter=None, usage_log=None,
                     retry_base_delay=2.0, max_retries=4, timeout=None, gemini_api=None, groq_api=None,
-                    keep_raw=False):
+                    keep_raw=False, terms=None, corrections=None):
     """Transcribe one recording with one model; long recordings are split and rebuilt.
 
     speakers / sounds (bool) and timestamps ("none", "major", "phrase") default to
@@ -322,6 +330,9 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
     in enhanced_dir, else audio_quality.default_cache_dir(); never beside the source.
     The original is kept and result["audio"] records which file was transcribed,
     with the copy's filters, sha256 and whether it was kept.
+
+    terms (list) are sent to the model as spelling hints; corrections
+    ([(heard, right)]) fix known mishearings in the finished text (vocabulary.py).
 
     keep_raw=True adds ``parts``:
     each request's exact parameters and raw provider response (for receipts).
@@ -346,7 +357,14 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
     if spec.live and (prompt or language):
         warnings.append("Live models take no prompt or language; both were ignored")
         prompt = language = None
-    settings = {"language": language, "prompt": prompt, "temperature": temperature,
+    from .vocabulary import gemini_hint, whisper_hint
+    if spec.live:
+        hint = ""
+        if terms:
+            warnings.append("Live models take no prompt; vocabulary hints were skipped")
+    else:
+        hint = gemini_hint(terms) if spec.kind == "gemini" else whisper_hint(terms)
+    settings = {"language": language, "prompt": prompt, "hint": hint, "temperature": temperature,
                 "overlap_seconds": overlap_seconds, "features": features, "keep_raw": keep_raw}
     clients = _Clients(limiter, usage_log, retry_base_delay, max_retries, timeout, gemini_api, groq_api)
     assessment, enhanced = None, None
@@ -419,6 +437,12 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
             if any(b["method"] == "model" for b in merged["boundaries"]):
                 settings["merge_model"] = merge_model
         warnings.extend(merged["warnings"])
+        from .vocabulary import correct
+        corrected = []
+        if corrections:
+            merged["text"], corrected = correct(merged["text"], corrections)
+            merged["segments"] = [{**seg, "text": correct(seg["text"], corrections)[0]}
+                                  for seg in merged["segments"] or []] or merged["segments"]
         no_speech = not speech and not errors
         text = merged["text"]
         if features["timestamps"] != "none" and not no_speech:
@@ -441,6 +465,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
             "output_tokens": sum_known(r.get("output_tokens") for r in results),
             "success": not errors, "no_speech": no_speech, "chunks": len(chunks),
             "boundaries": merged["boundaries"], "warnings": warnings, "features": features,
+            "corrections": corrected,
             "settings": {k: v for k, v in settings.items() if k not in ("features", "keep_raw")},
             "client": client_info(),
             "audio": {"source": str(source.resolve()), "sha256": _sha256(source), "assessment": assessment,
