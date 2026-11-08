@@ -6,9 +6,8 @@
 env_file = "~/.config/transcription/.env"
 
 [defaults]
-language = "ru"
 # The instruction sent to Gemini and Antigravity models (Whisper-style models get only the hints).
-prompt = "Transcribe the following audio to plain text. Do not include timestamps or time markers. If the audio is silent, empty, or unclear, output exactly '[SILENCE]'. Do NOT ask for the audio file. Do NOT converse. Write a strictly verbatim transcript in Russian Cyrillic. Keep every filler (а, э-э, ну, вот), repetition and self-correction exactly as spoken; keep colloquial pronunciations (чо, щас). Do not paraphrase, shorten or fix grammar. Write English brand names in Latin script. If a fragment is unintelligible, write <неразборчиво> instead of guessing."
+prompt = "Transcribe the following audio to plain text. Do not include timestamps or time markers. Do NOT ask for the audio file. Do NOT converse. Write a strictly verbatim transcript in the language spoken: Russian in Cyrillic, English in Latin script; if the speaker switches languages, keep each part in the language spoken. Never translate. Keep every filler (а, э-э, ну, вот), repetition and self-correction exactly as spoken; keep colloquial pronunciations (чо, щас). Do not paraphrase, shorten or fix grammar. Write English brand names in Latin script. If a fragment is unintelligible, write <неразборчиво> instead of guessing. Only if the audio contains no speech at all, output exactly '[SILENCE]'."
 
 [limits]
 state_file = "~/.local/state/transcription-core/ratelimit.sqlite"

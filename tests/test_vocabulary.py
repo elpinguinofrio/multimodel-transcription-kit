@@ -103,3 +103,23 @@ def test_example_config_fixes_brand_mishearings_seen_on_the_codexbar_sample():
     fixes = parse_corrections(config["vocabulary"]["corrections"])
     line = "мы не можем продолжать задачу в чат-GPT, да, или в Клоде."
     assert correct(line, fixes)[0] == "мы не можем продолжать задачу в ChatGPT, да, или в Claude."
+
+
+@pytest.mark.parametrize("name", ["transcription.example.toml", "transcription.example.ini"])
+def test_default_prompt_keeps_the_spoken_language_and_reserves_silence_for_no_speech(name):
+    # A Russian-only instruction made flash-lite write [SILENCE] for clear English messages.
+    from pathlib import Path
+    from multimodel_transcription_kit import runner
+    prompt = runner.load_config(str(Path(__file__).resolve().parents[1] / name))["defaults"]["prompt"]
+    assert "in Russian Cyrillic" not in prompt and "language spoken" in prompt
+    silence = prompt[prompt.index("[SILENCE]") - 120:prompt.index("[SILENCE]")]
+    assert "no speech" in silence and "unclear" not in silence
+
+
+@pytest.mark.parametrize("name", ["transcription.example.toml", "transcription.example.ini"])
+def test_default_config_lets_models_detect_the_language(name):
+    # language = ru made Parakeet turn English speech into digits and Cyrillic noise.
+    from pathlib import Path
+    from multimodel_transcription_kit import runner
+    config = runner.load_config(str(Path(__file__).resolve().parents[1] / name))
+    assert not config.has_option("defaults", "language")
