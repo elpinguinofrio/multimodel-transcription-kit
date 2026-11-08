@@ -118,3 +118,73 @@ def test_relocated_launcher_runs_cli_with_empty_home_and_minimal_path(tmp_path):
     assert result.returncode == 0, result.stderr
     assert 'Transcribe one audio file' in result.stdout
     assert not list(home.iterdir())
+
+
+TOML = '''[secrets]
+env_file = "~/.config/transcription/.env"
+
+[defaults]
+prompt = "Verbatim, 100% of the words."
+
+[[aistudio]]
+name = "mine"
+key_env = "GEMINI_API_KEY"
+
+[[aistudio]]
+name = "proxy"
+key_env = "PROXY_KEY"
+base_url = "http://127.0.0.1:8300"
+costs_money = true
+
+[[model]]
+name = "g"
+providers = ["mine", "proxy"]
+'''
+
+
+def make_bundle(root, toml=True):
+    bundle = root / '.private' / 'portable-macos-arm64-kit'
+    bundle.mkdir(parents=True)
+    (bundle / 'config.ini').write_text('[models]\nranking = old\n[model.old]\nkind = gemini\n')
+    (bundle / 'manifest.json').write_text(json.dumps({'env_relative': '.env/.env'}))
+    if toml:
+        (bundle / 'transcription.toml').write_text(TOML)
+    return bundle
+
+
+def test_portable_config_prefers_the_bundles_toml_providers(tmp_path):
+    entry = load_script('portable_entry')
+    root = tmp_path / 'shared' / 'projects' / 'core'
+    bundle = make_bundle(root)
+    cfg_path = entry.prepare_config(root, bundle, machine='host-one')
+    from multimodel_transcription_kit import runner
+    cfg = runner.load_config(str(cfg_path))
+    assert runner.ranked_models(cfg) == ['g@mine', 'g@proxy']
+    assert runner.model_options(cfg, 'g@proxy')['base_url'] == 'http://127.0.0.1:8300'
+    assert cfg['defaults']['prompt'] == 'Verbatim, 100% of the words.'
+    assert Path(cfg['secrets']['env_file']) == root.parents[1] / '.env' / '.env'
+    assert Path(cfg['limits']['state_file']).is_relative_to(root / '.private' / 'portable-state' / 'host-one')
+
+
+def test_portable_launcher_runs_the_current_source_before_the_bundled_copy(tmp_path, monkeypatch):
+    entry = load_script('portable_entry')
+    project = tmp_path / 'shared' / 'projects' / 'core'
+    bundle = make_bundle(project)
+    monkeypatch.setattr(entry, '__file__', str(project / 'scripts' / 'portable_entry.py'))
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    from multimodel_transcription_kit import cli
+    monkeypatch.setattr(cli, 'main', lambda argv: 0)
+    assert entry.main(['recording.wav', '--config', 'explicit.ini']) == 0
+    assert sys.path.index(str(project / 'src')) < sys.path.index(str(bundle / 'site-packages'))
+
+
+def test_portable_config_flag_prints_a_ready_config(tmp_path, monkeypatch, capsys):
+    entry = load_script('portable_entry')
+    project = tmp_path / 'shared' / 'projects' / 'core'
+    make_bundle(project)
+    monkeypatch.setattr(entry, '__file__', str(project / 'scripts' / 'portable_entry.py'))
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    assert entry.main(['--portable-config']) == 0
+    printed = Path(capsys.readouterr().out.strip())
+    assert printed.is_file() and printed.is_relative_to(project / '.private' / 'portable-state')
+    assert 'g@proxy' in printed.read_text()
