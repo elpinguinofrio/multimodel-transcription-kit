@@ -29,16 +29,21 @@ from .usage import usage_fields
 
 logger = logging.getLogger("engine")
 
-KINDS = ("gemini", "groq", "http")
+# gemini: Gemini API (AI Studio or any server speaking it); groq/openai: OpenAI-format speech API;
+# http: OpenAI-format local server without a key (older configs); agy: the Antigravity CLI.
+KINDS = ("gemini", "groq", "openai", "http", "agy")
 # Longest part sent in one request. Gemini REST: inline audio and output length;
 # Live: one session stays well inside the ~10-15 minute session limit; Groq:
 # its upload limit at the bitrates below; HTTP: a conservative default for local servers.
-CHUNK_SECONDS = {"gemini": 1800.0, "gemini-live": 600.0, "groq": 1200.0, "http": 1800.0}
+CHUNK_SECONDS = {"gemini": 1800.0, "gemini-live": 600.0, "groq": 1200.0, "openai": 1200.0, "http": 1800.0,
+                 "agy": 1800.0}
 # Raw bytes per request (Gemini inline data is base64-inflated into a 20 MB request).
-BYTE_LIMITS = {"gemini": 15_000_000, "groq": 24_000_000}
+BYTE_LIMITS = {"gemini": 15_000_000, "groq": 24_000_000, "openai": 24_000_000, "agy": 15_000_000}
 NATIVE_SUFFIXES = {"gemini": {".wav", ".mp3", ".m4a"},
                    "groq": {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"},
                    "http": set(HTTP_SUFFIXES)}
+NATIVE_SUFFIXES["openai"] = NATIVE_SUFFIXES["groq"]
+NATIVE_SUFFIXES["agy"] = NATIVE_SUFFIXES["gemini"]
 OVERLAP_SECONDS = 10.0
 # Live sessions can be ended by the server (goAway, dropped socket) and have no
 # transport retry of their own; each part gets this many fresh sessions more.
@@ -48,7 +53,8 @@ LIVE_SESSION_RETRIES = 1
 # Gemini, whose times would be generated text, offers none. Live returns input
 # transcription only. A model section's `capabilities` overrides these.
 CAPABILITIES = {"gemini": frozenset({"speakers", "sounds"}), "gemini-live": frozenset(),
-                "groq": frozenset({"timestamps"}), "http": frozenset({"timestamps"})}
+                "groq": frozenset({"timestamps"}), "openai": frozenset({"timestamps"}),
+                "http": frozenset({"timestamps"}), "agy": frozenset()}
 FEATURE_DEFAULTS = {"speakers": True, "sounds": True, "timestamps": "major"}
 MERGE_MODEL = "gemini-3.6-flash"
 GEMINI_DEFAULT_TEMPERATURE = 1.0
@@ -67,6 +73,11 @@ class ModelSpec:
     merge_model: Optional[str] = None
     requires_env: Optional[str] = None
     capabilities: Optional[frozenset] = None
+    # The configured provider (account) this route goes through, its address, and whether
+    # it is paid. Quota is tracked per account: see ``limit_key``.
+    account: Optional[str] = None
+    base_url: Optional[str] = None
+    costs_money: bool = False
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -85,8 +96,15 @@ class ModelSpec:
                    temperature=number("temperature"), chunk_seconds=number("chunk_seconds"),
                    merge_model=options.get("merge_model") or None,
                    requires_env=options.get("requires_env") or None,
+                   account=options.get("account") or None, base_url=options.get("base_url") or None,
+                   costs_money=str(options.get("costs_money", "")).lower() in ("1", "true", "yes", "on"),
                    capabilities=frozenset(c.strip() for c in options["capabilities"].split(",") if c.strip())
                    if options.get("capabilities") is not None else None)
+
+    @property
+    def limit_key(self):
+        """The rate-limiter key: "<account>/<model>" for a provider route, else the model."""
+        return f"{self.account}/{self.model}" if self.account else self.model
 
     @property
     def live(self):
@@ -127,7 +145,12 @@ def resolve_features(spec, speakers=None, sounds=None, timestamps=None):
 class _Clients:
     """Provider clients built on first use, so an HTTP-only run needs no API keys."""
 
-    def __init__(self, limiter, usage_log, retry_base_delay, max_retries, timeout, gemini=None, groq=None):
+    def __init__(self, limiter, usage_log, retry_base_delay, max_retries, timeout, gemini=None, groq=None,
+                 spec=None):
+        self.spec = spec
+        # Two accounts serving the same model keep separate quota.
+        if limiter is not None and spec is not None and spec.account:
+            limiter = limiter.scoped(spec.account)
         self.limiter, self.usage_log = limiter, usage_log
         self.retry_base_delay, self.max_retries, self.timeout = retry_base_delay, max_retries, timeout
         self._gemini, self._groq = gemini, groq
@@ -140,14 +163,20 @@ class _Clients:
     def gemini(self):
         if self._gemini is None:
             from .gemini_client import GeminiAPI
-            self._gemini = GeminiAPI(**self._options(), **({"timeout": self.timeout} if self.timeout else {}))
+            route = {"key_env": self.spec.requires_env, "base_url": self.spec.base_url} if self.spec else {}
+            self._gemini = GeminiAPI(**self._options(), **route, **({"timeout": self.timeout} if self.timeout else {}))
         return self._gemini
 
     @property
     def groq(self):
         if self._groq is None:
             from .groq_client import STTAPI
-            self._groq = STTAPI(**self._options(), timeout=self.timeout or 300)
+            route = {}
+            if self.spec is not None and self.spec.kind == "openai":
+                route = {"base_url": self.spec.base_url, "key_env": self.spec.requires_env, "provider": "openai"}
+            elif self.spec is not None and (self.spec.requires_env or self.spec.base_url):
+                route = {"base_url": self.spec.base_url, "key_env": self.spec.requires_env}
+            self._groq = STTAPI(**self._options(), **route, timeout=self.timeout or 300)
         return self._groq
 
 
@@ -256,11 +285,16 @@ def _request(spec, path, settings, clients):
             str(path), model=spec.model, language=settings["language"], full_prompt=full_prompt, prompt=extra,
             temperature=settings["temperature"], diarize=settings["features"]["speakers"],
             sounds=settings["features"]["sounds"], response_format="json" if settings["keep_raw"] else "text")
-    if spec.kind == "groq":
+    if spec.kind in ("groq", "openai"):
         result = clients.groq.speech_to_text(str(path), model=spec.model, language=settings["language"],
                                              prompt=_with_hint(settings), response_format="verbose_json")
         result["segments"] = _segments(result.get("segments"), result.get("words"))
+        result["provider"] = spec.kind
         return result
+    if spec.kind == "agy":
+        from .antigravity_client import transcribe as agy_transcribe
+        return agy_transcribe(path, spec.model, prompt=settings["prompt"], hint=settings.get("hint"),
+                              timeout=clients.timeout or 600, limiter=clients.limiter)
     from .http_client import transcribe as http_transcribe
     parsed, _, _, seconds = http_transcribe(
         path, spec.endpoint, model=spec.model, language=settings["language"], prompt=_with_hint(settings),
@@ -363,10 +397,10 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
         if terms:
             warnings.append("Live models take no prompt; vocabulary hints were skipped")
     else:
-        hint = gemini_hint(terms) if spec.kind == "gemini" else whisper_hint(terms)
+        hint = gemini_hint(terms) if spec.kind in ("gemini", "agy") else whisper_hint(terms)
     settings = {"language": language, "prompt": prompt, "hint": hint, "temperature": temperature,
                 "overlap_seconds": overlap_seconds, "features": features, "keep_raw": keep_raw}
-    clients = _Clients(limiter, usage_log, retry_base_delay, max_retries, timeout, gemini_api, groq_api)
+    clients = _Clients(limiter, usage_log, retry_base_delay, max_retries, timeout, gemini_api, groq_api, spec=spec)
     assessment, enhanced = None, None
     try:
         assessment = assess_audio(source)

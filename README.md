@@ -12,10 +12,21 @@ Python 3.10+ is required. From this checkout, install into the environment that 
 python -m pip install ".[live]"
 ```
 
-From a checkout, copy `transcription.example.ini` to `transcription.ini` **if you
-do not already have a configuration**. Set the models, endpoints, paths, and
-`[secrets] env_file` to an existing key file. Personal configuration and keys stay
-out of Git. The CLI defaults to `./transcription.ini`; `--config` selects another.
+From a checkout, copy `transcription.example.toml` to `transcription.toml` **if you
+do not already have a configuration**. It has two parts:
+
+- **Providers**: one `[[aistudio]]`, `[[antigravity]]` or `[[openai]]` block per
+  account, each with your own `name` and optional `key_env`, `base_url` and
+  `costs_money = true`. A proxy is just an account with its own `base_url`. A local
+  speech server is an `[[openai]]` account without a key.
+- **Models**, best first: one `[[model]]` block each, listing its `providers` in the
+  order to try. `word_times = true` marks the models that may supply word times.
+
+Every free route of every model is tried before any `costs_money` account. Set
+`[secrets] env_file` to an existing key file; personal configuration and keys stay out
+of Git. The CLI uses `./transcription.toml` when present, else `./transcription.ini`,
+and `--config` selects another file. `--convert-config transcription.ini` prints the
+TOML equivalent of an older INI config. Reading TOML needs Python 3.11+ (or `tomli`).
 `ffmpeg` and `ffprobe` are needed for conversion, splitting, and enhancement.
 
 ```sh

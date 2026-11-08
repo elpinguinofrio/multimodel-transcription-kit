@@ -58,8 +58,14 @@ class STTAPI:
 
     def __init__(self, throttle_rate: float = 0.5, timeout: int = 40, rate_limiter=None,
                  max_retries: int = 4, retry_base_delay: float = 2.0,
-                 max_retry_delay: float = 60.0, usage_log=None) -> None:
-        self.api_key: str = self._get_api_key()
+                 max_retry_delay: float = 60.0, usage_log=None, base_url: Optional[str] = None,
+                 key_env: Optional[str] = None, provider: str = "groq") -> None:
+        # Any OpenAI-format speech endpoint: base_url (".../v1") replaces Groq's, key_env names
+        # its key. provider="openai" with no key_env sends no key (a local server needs none).
+        if base_url:
+            self.API_URL = base_url.rstrip("/") + "/audio/transcriptions"
+        self.provider = provider
+        self.api_key: Optional[str] = (self._get_api_key(key_env) if key_env or provider == "groq" else None)
         self.throttle_rate = throttle_rate
         self.timeout = timeout
         # Shared RateLimiter; when set it replaces the built-in throttle.
@@ -72,9 +78,9 @@ class STTAPI:
         logger.info("STTAPI initialized (throttle=%s, timeout=%s)", throttle_rate, timeout)
 
     @staticmethod
-    def _get_api_key() -> str:
+    def _get_api_key(key_env=None) -> str:
         from .config import require_key
-        return require_key("GROQ_API_KEY", STTAPIError)
+        return require_key(key_env or "GROQ_API_KEY", STTAPIError)
 
     # ───────────────────────── helpers ──────────────────────────
 
@@ -211,7 +217,7 @@ class STTAPI:
         if self.rate_limiter is None:
             self._throttle()
 
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         data = {
             "model": model_name,
             "response_format": response_format,
@@ -238,7 +244,7 @@ class STTAPI:
                 ),
                 limiter=self.rate_limiter, key=model_name, max_retries=self.max_retries,
                 base_delay=self.retry_base_delay, max_delay=self.max_retry_delay,
-                usage_log=self.usage_log, provider="groq", operation="transcription",
+                usage_log=self.usage_log, provider=self.provider, operation="transcription",
             )
             if res.status_code != 200:
                 try:

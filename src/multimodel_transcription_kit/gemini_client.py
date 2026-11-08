@@ -118,6 +118,8 @@ class GeminiAPI:
         max_retry_delay: float = 60.0,
         rate_limiter=None,
         usage_log=None,
+        key_env: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> None:
         """
         Initialize the Gemini API client.
@@ -131,10 +133,11 @@ class GeminiAPI:
         # .env must load unconditionally first — a shell-exported GEMINI_API_KEY
         # would otherwise short-circuit loading and hide GEMINI_BASE_URL.
         self._load_env_files()
-        self.api_key: Optional[str] = self._get_api_key()
-        # GEMINI_BASE_URL overrides the endpoint host (e.g. an alternate
-        # Gemini-compatible gateway); defaults to Google's public API.
-        self.base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com").rstrip("/")
+        # key_env / base_url come from a configured provider; without them the key is
+        # GEMINI_API_KEY and GEMINI_BASE_URL overrides the host (default: Google's public API).
+        self.api_key: Optional[str] = self._get_api_key(key_env)
+        self.base_url = (base_url or os.getenv("GEMINI_BASE_URL")
+                         or "https://generativelanguage.googleapis.com").rstrip("/")
         self.API_URL = f"{self.base_url}/v1beta/models/{{model}}:generateContent"
         self.throttle_rate = throttle_rate
         self.timeout = timeout
@@ -159,9 +162,9 @@ class GeminiAPI:
         load_env_file()
 
     @staticmethod
-    def _get_api_key() -> str:
+    def _get_api_key(key_env=None) -> str:
         from .config import require_key
-        return require_key("GEMINI_API_KEY", GeminiAPIError)
+        return require_key(key_env or "GEMINI_API_KEY", GeminiAPIError)
 
     # ───────────────────────── helpers ──────────────────────────
 

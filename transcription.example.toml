@@ -1,0 +1,93 @@
+# multimodel-transcription-kit config. Copy to transcription.toml and edit.
+# (An older transcription.ini still works; convert it with --convert-config transcription.ini.)
+
+[secrets]
+# The file that holds the keys named by key_env below; secrets never live here.
+env_file = "~/.config/transcription/.env"
+
+[defaults]
+language = "ru"
+# The instruction sent to Gemini and Antigravity models (Whisper-style models get only the hints).
+prompt = "Transcribe the following audio to plain text. Do not include timestamps or time markers. If the audio is silent, empty, or unclear, output exactly '[SILENCE]'. Do NOT ask for the audio file. Do NOT converse. Write a strictly verbatim transcript in Russian Cyrillic. Keep every filler (а, э-э, ну, вот), repetition and self-correction exactly as spoken; keep colloquial pronunciations (чо, щас). Do not paraphrase, shorten or fix grammar. Write English brand names in Latin script. If a fragment is unintelligible, write <неразборчиво> instead of guessing."
+
+[limits]
+state_file = "~/.local/state/transcription-core/ratelimit.sqlite"
+max_wait_seconds = 3600
+
+[vocabulary]
+# Spelling hints sent to the model, and "heard -> right" fixes applied to the finished text.
+terms = ["вайбкодинг", "вайбкодил", "вайбкодить", "Claude", "Codex", "ChatGPT", "CodexBar", "OpenClaw", "OpenAI", "Cursor", "UTM", "Gemini"]
+corrections = [
+  "веб-кодинг -> вайбкодинг",
+  "вейп козинг -> вайбкодинг",
+  "вайп козинг -> вайбкодинг",
+  "вайб кодинг -> вайбкодинг",
+  "вебкодил -> вайбкодил",
+  "вайб кодил -> вайбкодил",
+  "чат-GPT -> ChatGPT",
+  "Клоде -> Claude",
+]
+
+# Providers: one [[type]] block per account; repeat a block for every account you have.
+# Types: aistudio (Gemini API), antigravity (the agy CLI), openai (any OpenAI-format
+# speech API, local or remote).
+#   name        = yours; models refer to it, receipts record it
+#   key_env     = env variable holding its key (optional for openai)
+#   base_url    = its address (default: the type's public one)
+#   costs_money = true -> tried only after every free route of every model has failed
+
+[[aistudio]]
+name = "my-aistudio"
+key_env = "GEMINI_API_KEY"
+
+# A second account of the same type, reached through a Gemini-compatible proxy.
+[[aistudio]]
+name = "my-proxy"
+key_env = "PROXY_GEMINI_KEY"
+base_url = "http://127.0.0.1:8300"
+costs_money = true
+
+[[antigravity]]
+name = "my-agy"
+
+[[openai]]
+name = "my-groq"
+key_env = "GROQ_API_KEY"
+base_url = "https://api.groq.com/openai/v1"
+
+[[openai]]
+name = "my-local-parakeet"
+base_url = "http://127.0.0.1:8765/v1"
+
+# Models, best first: the order of these blocks is the ranking (benchmarks: README).
+#   providers  = provider names to try for this model, in order
+#                ("name:id" when that provider calls the model something else)
+#   word_times = true -> may supply word times, tried in this same order. Gemini's own
+#                times are generated text (measured off by tens of seconds), so the best
+#                text model writes the text and a word_times model supplies the times.
+
+[[model]]
+name = "gemini-3.8-flash"
+providers = ["my-agy:gemini-3.8-flash-low", "my-aistudio", "my-proxy"]
+
+[[model]]
+name = "gemini-3.5-transcribe"
+providers = ["my-aistudio", "my-proxy"]
+
+[[model]]
+name = "gemini-3-flash-preview"
+providers = ["my-aistudio", "my-proxy"]
+
+[[model]]
+name = "gemini-3.6-flash"
+providers = ["my-aistudio", "my-proxy"]
+
+[[model]]
+name = "parakeet-tdt-0.6b-v3"
+providers = ["my-local-parakeet"]
+word_times = true
+
+[[model]]
+name = "whisper-large-v3-turbo"
+providers = ["my-groq"]
+word_times = true

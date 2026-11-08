@@ -56,7 +56,8 @@ def gateway(kind, texts=None, statuses=()):
         def do_POST(self):
             body = self.rfile.read(int(self.headers["Content-Length"]))
             transcription = b"inline_data" in body or b"multipart" in self.headers.get("Content-Type", "").encode()
-            seen.append({"path": self.path, "body": body, "transcription": transcription})
+            seen.append({"path": self.path, "body": body, "transcription": transcription,
+                         "headers": dict(self.headers)})
             count = sum(1 for s in seen if s["transcription"])
             status = statuses[len(seen) - 1] if len(seen) <= len(statuses) else 200
             if transcription:

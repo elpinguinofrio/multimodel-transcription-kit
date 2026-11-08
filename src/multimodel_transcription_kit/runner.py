@@ -19,15 +19,24 @@ from .errors import FusionError, NoModelAvailableError, TranscriptionError
 from .rate_limiter import RateLimitError
 
 DEFAULT_CONFIG_NAME = "transcription.ini"
-EXAMPLE_CONFIG_NAME = "transcription.example.ini"
+DEFAULT_TOML_NAME = "transcription.toml"             # used instead when present
+EXAMPLE_CONFIG_NAME = "transcription.example.toml"
 KEY_FOR_KIND = {"gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY"}
 
 
 def load_config(explicit):
     """Read the CLI's config file; an explicit path must exist."""
-    path = Path(explicit).expanduser() if explicit else Path.cwd() / DEFAULT_CONFIG_NAME
+    if explicit:
+        path = Path(explicit).expanduser()
+    else:
+        toml = Path.cwd() / DEFAULT_TOML_NAME
+        path = toml if toml.is_file() else Path.cwd() / DEFAULT_CONFIG_NAME
     if not path.is_file():
-        raise FileNotFoundError(f"No config at {path}. Copy {EXAMPLE_CONFIG_NAME} to {DEFAULT_CONFIG_NAME} and edit it.")
+        raise FileNotFoundError(f"No config at {path}. Copy {EXAMPLE_CONFIG_NAME} to {DEFAULT_TOML_NAME} "
+                                f"(or the older transcription.example.ini to {DEFAULT_CONFIG_NAME}) and edit it.")
+    if path.suffix.lower() == ".toml":
+        from .toml_config import load
+        return load(path)
     parser = configparser.ConfigParser()
     parser.read(path, encoding="utf-8")
     return parser
@@ -59,6 +68,12 @@ def timing_models(config):
     return [name for name in names if config.has_section(f"model.{name}")]
 
 
+def model_routes(config, model):
+    """The route names of a TOML-configured model, in provider order (empty for INI configs)."""
+    raw = config.get("model_routes", model, fallback="")
+    return [name.strip() for name in raw.split(",") if name.strip()]
+
+
 def model_options(config, name):
     section = f"model.{name}"
     if not config.has_section(section):
@@ -73,8 +88,12 @@ def is_reachable(name, options):
     an expired key still reports reachable and fails at transcription time.
     """
     kind = options.get("kind")
-    if kind == "http":
-        url = urlparse(options.get("endpoint", ""))
+    if kind == "agy":
+        from .antigravity_client import binary
+        return binary() is not None
+    address = options.get("endpoint") if kind == "http" else options.get("base_url")
+    if address:                                   # a configured address must answer
+        url = urlparse(address)
         if not url.hostname:
             return False
         port = url.port or (443 if url.scheme == "https" else 80)
@@ -82,9 +101,12 @@ def is_reachable(name, options):
             socket.create_connection((url.hostname, port), timeout=1.5).close()
         except OSError:
             return False
+    if kind == "http":
         return True
     variable = options.get("requires_env") or KEY_FOR_KIND.get(kind)
-    return bool(variable and os.environ.get(variable))
+    if variable is None:                          # an openai provider without a key
+        return kind == "openai"
+    return bool(os.environ.get(variable))
 
 
 def model_spec(config, name, options):
@@ -93,7 +115,7 @@ def model_spec(config, name, options):
     from .engine import ModelSpec
     spec = ModelSpec.from_options(name, options)
     default_prompt = config.get("defaults", "prompt", fallback=None) if config is not None else None
-    if spec.prompt is None and default_prompt and spec.kind == "gemini":
+    if spec.prompt is None and default_prompt and spec.kind in ("gemini", "agy"):
         from dataclasses import replace
         spec = replace(spec, prompt=default_prompt)
     return spec
@@ -183,6 +205,8 @@ def build_parser():
                         help="With -d, also write <transcript>.receipt.json: spec, options, client "
                              "version, input hash and raw provider responses")
     parser.add_argument("--list-models", action="store_true", help="Show the ranking and what is reachable now")
+    parser.add_argument("--convert-config", metavar="INI", type=Path,
+                        help="Print a transcription.toml equivalent to an existing .ini config, then exit")
     parser.add_argument("--term", action="append", default=[],
                         help="A term the speaker uses, sent to the model as a spelling hint; adds to "
                              "[vocabulary] terms (repeat)")
@@ -296,6 +320,16 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
 
+    if args.convert_config is not None:
+        from .toml_config import ConfigError, convert_ini
+        old = configparser.ConfigParser(interpolation=None)
+        if not old.read(args.convert_config, encoding="utf-8"):
+            parser.error(f"No config at {args.convert_config}")
+        try:
+            print(convert_ini(old), end="")
+        except ConfigError as error:
+            parser.error(str(error))
+        return 0
     if not args.list_models and args.audio is None:
         parser.error("Give an audio file, or --list-models")
     if args.audio is not None and not args.audio.is_file():
@@ -303,9 +337,10 @@ def main(argv=None):
     if args.destination is not None and not args.destination.is_dir():
         parser.error(f"Destination directory does not exist: {args.destination}")
 
+    from .toml_config import ConfigError
     try:
         config = load_config(args.config)
-    except FileNotFoundError as error:
+    except (FileNotFoundError, ConfigError) as error:
         parser.error(str(error))
     load_secrets(config)
     from .rate_limiter import RateLimiter
@@ -321,11 +356,13 @@ def main(argv=None):
         for name in ranking:
             options = model_options(config, name)
             state = "reachable" if is_reachable(name, options) else "unavailable"
-            api_model = options.get("model", name)
-            limits = limiter.limits.get(api_model)
+            api_model = options.get("limit_key") or options.get("model", name)
+            limits = limiter.limits_for(api_model)
             quota = ""
             if limits is not None and limits.rpd is not None:
                 quota = f"  today {limiter.usage(api_model)['today']}/{limits.rpd}"
+            if options.get("costs_money") == "true":
+                quota += "  costs money"
             from .selection import verify
             try:
                 checked = verify(model_spec(config, name, options)).reason
@@ -345,7 +382,10 @@ def main(argv=None):
             parser.error(f"--fuse needs at least two configured models; unknown: {', '.join(unknown) or 'none'}")
         return _run_fusion(args, config, names, limiter, usage_log, list(sys.argv[1:] if argv is None else argv))
 
-    if args.model:
+    routes = model_routes(config, args.model) if args.model else []
+    if args.model and routes:
+        candidates = routes                   # one model: its providers in order, with fallback between them
+    elif args.model:
         options = model_options(config, args.model)
         if options is None:
             parser.error(f"Unknown model {args.model!r}; known: {', '.join(ranking)}")
@@ -373,7 +413,7 @@ def main(argv=None):
     from .selection import describe_error, transcribe_best
     try:
         result = transcribe_best(args.audio, specs, probe=lambda spec: is_reachable(spec.name, options_by_name[spec.name]),
-                                 transcribe=run_model, limiter=limiter, allow_fallback=not args.model,
+                                 transcribe=run_model, limiter=limiter, allow_fallback=not args.model or bool(routes),
                                  timing_specs=timing_specs, **settings)
     except NoModelAvailableError as error:
         if not any("error" in attempt for attempt in error.attempts):

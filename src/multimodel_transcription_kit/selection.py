@@ -53,7 +53,7 @@ def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow
         available = probe(spec)
         if not isinstance(available, Availability):
             available = Availability(bool(available), "" if available else "not reachable")
-        exhausted = limiter.exhausted(spec.model) if limiter is not None and available.ok else None
+        exhausted = limiter.exhausted(spec.limit_key) if limiter is not None and available.ok else None
         reason = available.reason if not available.ok else exhausted and f"quota: {exhausted}"
         borrow_times = False
         if not reason:
@@ -150,18 +150,28 @@ def verify(spec, *, timeout=10.0):
     from .config import load_env_file
     if spec.kind == "http":
         return _verify_http(spec, timeout)
+    if spec.kind == "agy":
+        from .antigravity_client import binary
+        return (Availability(True, "agy CLI installed; quota not checked (agy reports none up front)")
+                if binary() else Availability(False, "the agy CLI is not installed"))
     load_env_file()
-    variable = spec.requires_env or KEY_FOR_KIND[spec.kind]
-    key = os.environ.get(variable)
-    if not key:
+    variable = spec.requires_env or KEY_FOR_KIND.get(spec.kind)
+    key = os.environ.get(variable) if variable else None
+    if variable and not key:
         return Availability(False, f"{variable} is not set")
+    if spec.kind == "openai":
+        # The model list works on Groq, OpenAI and local servers alike (/models/<id> does not).
+        base = (spec.base_url or "https://api.openai.com/v1").rstrip("/")
+        return _verify_http(spec, timeout, endpoint=f"{base}/audio/transcriptions",
+                            headers={"Authorization": f"Bearer {key}"} if key else None)
     if spec.kind == "gemini":
-        base = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com").rstrip("/")
+        base = (spec.base_url or os.getenv("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com").rstrip("/")
         status, failure = _remote(f"{base}/v1beta/models/{spec.model}", {"x-goog-api-key": key}, timeout)
     else:
         from .groq_client import STTAPI
-        base = STTAPI.API_URL.split("/audio/")[0].rstrip("/")
-        status, failure = _remote(f"{base}/models/{spec.model}", {"Authorization": f"Bearer {key}"}, timeout)
+        base = (spec.base_url or STTAPI.API_URL.split("/audio/")[0]).rstrip("/")
+        status, failure = _remote(f"{base}/models/{spec.model}",
+                                  {"Authorization": f"Bearer {key}"} if key else {}, timeout)
     if status == 200:
         return Availability(True, "verified: key accepted and model served")
     if status == 404:
@@ -171,22 +181,23 @@ def verify(spec, *, timeout=10.0):
     return Availability(True, f"unverified ({failure or f'HTTP {status}'}); will try at transcription time")
 
 
-def _verify_http(spec, timeout):
+def _verify_http(spec, timeout, endpoint=None, headers=None):
     """A listed model proves the server knows the name, not which model answers a request."""
     import socket
     from urllib.parse import urlparse
     import requests
-    url = urlparse(spec.endpoint)
+    endpoint = endpoint or spec.endpoint
+    url = urlparse(endpoint)
     try:
         socket.create_connection((url.hostname, url.port or (443 if url.scheme == "https" else 80)),
                                  timeout=min(timeout, 3)).close()
     except (OSError, TypeError) as exc:
         return Availability(False, f"endpoint not answering ({type(exc).__name__})")
-    head, separator, _ = spec.endpoint.partition("/audio/")
+    head, separator, _ = endpoint.partition("/audio/")
     if not separator:
         return Availability(True, "endpoint answering; model unverified (no model list beside this endpoint)")
     try:
-        response = requests.get(f"{head}/models", timeout=timeout, allow_redirects=False)
+        response = requests.get(f"{head}/models", headers=headers, timeout=timeout, allow_redirects=False)
     except requests.RequestException as exc:
         return Availability(True, f"endpoint answering; model unverified ({type(exc).__name__})")
     if response.status_code != 200:

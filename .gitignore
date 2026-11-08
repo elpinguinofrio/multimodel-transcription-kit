@@ -16,6 +16,7 @@ build/
 
 # personal cli-runner config (copy transcription.example.ini)
 /transcription.ini
+/transcription.toml
 
 # Retained private outputs from the retired comparison example
 /examples/

@@ -183,11 +183,23 @@ class RateLimiter:
             options = parser[section]
             found = _limits_from(options)
             if found != Limits():
-                key = options.get("model", section[len(section_prefix):])
+                key = options.get("limit_key") or options.get("model", section[len(section_prefix):])
                 limits[key] = _overlay(limits.get(key, Limits()), found)
         kwargs.setdefault("state_path", parser.get("limits", "state_file", fallback=None))
         kwargs.setdefault("max_wait", parser.getfloat("limits", "max_wait_seconds", fallback=3600.0))
         return cls(limits, **kwargs)
+
+    def limits_for(self, key: str) -> Optional[Limits]:
+        """Limits for `key`; an account-scoped key ("account/model") falls back to the model's."""
+        limits = self.limits.get(key)
+        if limits is None and "/" in key:
+            limits = self.limits.get(key.split("/", 1)[1])
+        return limits
+
+    def scoped(self, account: Optional[str]):
+        """This limiter with every key prefixed by `account`, so two accounts serving the
+        same model keep separate quota; the same limiter when `account` is empty."""
+        return ScopedLimiter(self, account) if account else self
 
     # ───────────────────────── storage ──────────────────────────
 
@@ -212,7 +224,7 @@ class RateLimiter:
 
     def acquire(self, key: str, tokens: int = 0) -> None:
         """Block until a request for `key` fits every limit, then record it."""
-        limits = self.limits.get(key)
+        limits = self.limits_for(key)
         if limits is not None and 0 in (limits.rpm, limits.tpm, limits.rpd):
             raise QuotaExhausted(key, next_quota_reset(self._clock()),
                                  "limit is 0 for this model on this API tier")
@@ -266,7 +278,7 @@ class RateLimiter:
 
         Read-only: model selection uses it to skip a model without spending a request.
         """
-        limits = self.limits.get(key)
+        limits = self.limits_for(key)
         if limits is not None and 0 in (limits.rpm, limits.tpm, limits.rpd):
             return "limit is 0 for this model on this API tier"
         now = self._clock()
@@ -305,7 +317,7 @@ class RateLimiter:
             return row[0] - now
         day_start = quota_day_start(now)
         db.execute("DELETE FROM requests WHERE ts < ?", (min(day_start, now - WINDOW_SECONDS),))
-        limits = self.limits.get(key)
+        limits = self.limits_for(key)
         if limits is not None:
             if limits.rpd is not None:
                 (today,) = db.execute("SELECT COUNT(*) FROM requests WHERE key=? AND ts>=?",
@@ -325,3 +337,32 @@ class RateLimiter:
                             return ts + WINDOW_SECONDS - now
         db.execute("INSERT INTO requests (key, ts, tokens) VALUES (?, ?, ?)", (key, now, tokens))
         return 0.0
+
+
+class ScopedLimiter:
+    """A RateLimiter view whose keys are "<account>/<key>" (see RateLimiter.scoped)."""
+
+    def __init__(self, base: RateLimiter, account: str):
+        self.base, self.account = base, account
+
+    def _key(self, key):
+        return f"{self.account}/{key}"
+
+    @property
+    def limits(self):
+        return self.base.limits
+
+    def acquire(self, key, tokens=0):
+        return self.base.acquire(self._key(key), tokens)
+
+    def block(self, key, seconds, reason="server asked to slow down"):
+        return self.base.block(self._key(key), seconds, reason)
+
+    def block_until_reset(self, key, reason):
+        return self.base.block_until_reset(self._key(key), reason)
+
+    def usage(self, key):
+        return self.base.usage(self._key(key))
+
+    def exhausted(self, key):
+        return self.base.exhausted(self._key(key))
