@@ -32,6 +32,10 @@ class ResponseError(ProviderError):
         self.partial_text = partial_text
 
 
+class FalseSilenceError(ProviderError):
+    """The model answered [SILENCE] (or nothing) for audio that clearly holds speech."""
+
+
 class IncompleteTranscriptError(TranscriptionError):
     """Some parts of a long recording failed. ``result`` holds the partial
     transcript (with failure markers, success=False); ``failed_parts`` are 1-based."""

@@ -19,7 +19,8 @@ from typing import Optional
 from .audio_chunker import AudioChunk, get_duration, split_audio
 from .audio_quality import assess as assess_audio, enhance as enhance_audio
 from .chunk_merger import BOUNDARY_PROMPT
-from .errors import AudioPreparationError, IncompleteTranscriptError, TranscriptionError, UnsupportedFeatureError
+from .errors import (AudioPreparationError, FalseSilenceError, IncompleteTranscriptError, TranscriptionError,
+                     UnsupportedFeatureError)
 from .http_client import ACCEPTED_SUFFIXES as HTTP_SUFFIXES
 from .rate_limiter import RateLimitError
 from .receipts import client_info
@@ -46,6 +47,12 @@ NATIVE_SUFFIXES = {"gemini": {".wav", ".mp3", ".m4a"},
 NATIVE_SUFFIXES["openai"] = NATIVE_SUFFIXES["groq"]
 NATIVE_SUFFIXES["agy"] = NATIVE_SUFFIXES["gemini"]
 OVERLAP_SECONDS = 10.0
+# A part holds speech when its speech level (95th percentile, audio_quality.assess) is above
+# SPEECH_LEVEL_DB and SPEECH_SNR_DB over its noise floor. Measured 2026-11-09: the parts
+# flash-lite called silent were -23 and -24 dB at 22 and 26 dB SNR; digital silence, room
+# tone and steady hiss stayed at or below 4.3 dB SNR.
+SPEECH_LEVEL_DB = -45.0
+SPEECH_SNR_DB = 15.0
 # Live sessions can be ended by the server (goAway, dropped socket) and have no
 # transport retry of their own; each part gets this many fresh sessions more.
 # REST clients already retry 429/5xx/connection errors, so the engine adds none.
@@ -399,6 +406,22 @@ def describe(error):
     return f"{type(error).__name__}: {error}" if error is not None else None
 
 
+def _holds_speech(path):
+    """True when the audio clearly holds speech; False when it does not or cannot be measured."""
+    try:
+        found = assess_audio(path)
+    except (AudioPreparationError, OSError):
+        return False
+    level, snr = found.get("speech_level_db"), found.get("snr_db")
+    return level is not None and snr is not None and level > SPEECH_LEVEL_DB and snr >= SPEECH_SNR_DB
+
+
+def _check_silence(result, path, number):
+    """A silence reply for audio that holds speech is a failed request (part fails, next model runs)."""
+    if result.get("no_speech", is_no_speech(result.get("text"))) and _holds_speech(path):
+        raise FalseSilenceError(f"part {number}: the model answered [SILENCE] but the audio holds speech")
+
+
 def _failed(result):
     text = (result.get("text") or "").lstrip()
     return text.startswith("[PARSE_ERROR]") or "[TRANSCRIPTION FAILED]" in text
@@ -499,6 +522,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
             result = _request_with_retry(spec, Path(chunk.path), settings, clients, warnings, number)
             if _failed(result):
                 raise ValueError(f"part {number} returned {result['text'][:200]!r}")
+            _check_silence(result, Path(chunk.path), number)
             return result
 
         results, parts, errors, errors_by_part = [], [], [], {}
