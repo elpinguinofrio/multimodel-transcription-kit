@@ -63,7 +63,9 @@ Use model names present in your configuration. `notes/` must already exist.
 Without `-d`, text goes to stdout and diagnostics to stderr. With `-d`, files are
 named `<name>.<model>.md`; reruns add `.(2)`, `.(3)`, etc., preserving earlier files.
 `-m` selects exactly one model (trying its providers in order). Otherwise the profile's
-order (see above) controls selection and permitted fallback. `--list-models` makes provider metadata
+order (see above) controls selection and permitted fallback. When one part of a long
+recording fails (an error, or `[SILENCE]` over audible speech), only that part goes to the next
+models in the order; the other parts keep their text. `--list-models` makes provider metadata
 requests; it does not transcribe audio. `--help` needs no configuration or provider.
 
 The checkout's `./multimodel-transcription-kit` is an optional host/VM launcher backed by a

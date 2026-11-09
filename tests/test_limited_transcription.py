@@ -124,8 +124,9 @@ def test_transcribe_large_model_is_limited_for_chunks_and_merge(tmp_path):
         return response
     first = " ".join(f"first{i}" for i in range(100))
     second = " ".join(f"second{i}" for i in range(100))
-    # No words shared at the boundary, so the merge model is asked once.
-    responses = [reply(first), reply(second), reply(first[-200:] + " " + second[:200])]
+    # No words shared at the boundary, so the merge model is asked once; it returns both
+    # 500-character windows whole (a reply that drops speech would be rejected).
+    responses = [reply(first), reply(second), reply(first[-499:] + " " + second[:500])]
     made, duration, split = engine_seams(tmp_path, 3600.0)
     with duration, split, \
          patch.object(api, "_get_audio_duration", return_value=1800.0, create=True), \

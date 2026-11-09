@@ -131,3 +131,51 @@ def test_unlinked_speakers_get_new_labels_and_a_warning():
     merged = reconstruct([a, b], overlap=10, speakers=True)
     assert merged["text"].endswith("Speaker 2: six seven")
     assert any("could not be linked" in w for w in merged["warnings"])
+
+
+# Seen live 2026-11-09: 9 one-minute parts of a recording whose speech repeats lost
+# 567 of 1017 words. The next part's opening matched an earlier copy of the same speech
+# far back in the joined text, and everything after that copy was cut.
+def _stream_parts(stream, chunk=20.0, overlap=4.0, rate=2.0):
+    """Text-only parts of ``stream`` (one word every 1/rate s), each ``chunk`` s long."""
+    parts, start, total = [], 0.0, len(stream) / rate
+    while True:
+        end = min(start + chunk, total)
+        words = [w for i, w in enumerate(stream) if start <= i / rate < end]
+        parts.append(Part(len(parts) + 1, start, end, text=text(words)))
+        if end >= total:
+            return parts
+        start += chunk - overlap
+
+
+def test_repeated_speech_far_back_does_not_cut_the_transcript():
+    base = [f"w{i}" for i in range(200)]
+    stream = base[:100] + base[30:42] + base[100:150]       # 12 words said again later
+    merged = reconstruct(_stream_parts(stream), overlap=4)
+    assert merged["text"] == text(stream)
+
+
+def test_a_match_that_would_drop_far_more_than_the_overlap_is_not_used():
+    a = Part(1, 0, 30, text=text(f"a{i}" for i in range(40)) + " one two three four five")
+    b = Part(2, 20, 50, text="x y z " + text(f"b{i}" for i in range(30)) + " one two three four five tail")
+    # The only common words would cut all 30 b-words: no safe join, so it fails loudly.
+    with pytest.raises(ReconstructionError):
+        reconstruct([a, b], overlap=10)
+
+
+def test_merge_model_output_that_drops_more_than_the_overlap_is_rejected():
+    a = Part(1, 0, 60, text=text(f"a{i:03d}" for i in range(200)))
+    b = Part(2, 50, 110, text=text(f"b{i:03d}" for i in range(200)))
+
+    def lossy(tail, head):                                   # keeps 60% of the two windows
+        return tail[: int(len(tail) * 0.6)] + " " + head[-int(len(head) * 0.6):]
+    with pytest.raises(ReconstructionError, match="dropped"):
+        reconstruct([a, b], overlap=10, merge_text=lossy)
+
+
+def test_merge_model_output_that_removes_the_overlap_once_is_kept():
+    a = Part(1, 0, 60, text=text(f"a{i:03d}" for i in range(190)) + " " + text(f"o{i}" for i in range(30)))
+    b = Part(2, 50, 110, text=text(f"o{i}x" for i in range(30)) + " " + text(f"b{i:03d}" for i in range(190)))
+    once = lambda tail, head: tail + " " + head.split(" ", 30)[-1]   # the model drops b's copy
+    merged = reconstruct([a, b], overlap=10, merge_text=once)
+    assert merged["text"].count("o29") == 1 and "b189" in merged["text"] and "a000" in merged["text"]

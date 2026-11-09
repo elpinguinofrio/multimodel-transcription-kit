@@ -29,8 +29,15 @@ MIN_MATCH_WORDS = 4
 # in the overlap, within these bounds.
 MIN_WINDOW_WORDS = 30
 MAX_WINDOW_WORDS = 400
-# Characters per side handed to the merge model when no words match.
+# Characters per side handed to the merge model when no words match (at least
+# MODEL_WINDOW_OVERLAPS times the text expected in the overlap).
 MODEL_WINDOW_CHARS = 500
+MODEL_WINDOW_OVERLAPS = 3
+# A join may drop up to this many overlaps' worth of words or characters (the overlap's
+# speech is in both parts, so a correct join drops about one), plus a small allowance.
+MAX_DROP_OVERLAPS = 1.5
+DROP_ALLOWANCE_WORDS = 6
+DROP_ALLOWANCE_CHARS = 40
 FAILED_MARKER = "[Part {} - TRANSCRIPTION FAILED]"
 
 _TOKEN = re.compile(r"\S+\s*")
@@ -109,16 +116,45 @@ def _window(count, overlap, duration):
     return int(min(MAX_WINDOW_WORDS, max(MIN_WINDOW_WORDS, 3 * expected + 20)))
 
 
-def _match(left, right, overlap, left_duration, right_duration):
+def _rate(count, duration):
+    return count / duration if duration else None
+
+
+def _match(left, right, overlap, left_duration, right_duration, left_count):
+    """Matched (left index, right index) pairs, or None.
+
+    ``left_count`` is the number of words in the previous part alone: the joined text
+    before it says nothing about how many words the overlap holds. A run of common
+    words is used only if cutting there drops about one overlap's worth of words;
+    speech said again elsewhere would otherwise cut everything between the copies.
+    """
     left_keys = _keys(left.tokens, "".join(left.tokens))
     right_keys = _keys(right.tokens, "".join(right.tokens))
-    tail = left_keys[-_window(len(left_keys), overlap, left_duration):]
+    tail = left_keys[-_window(left_count, overlap, left_duration):]
     head = right_keys[:_window(len(right_keys), overlap, right_duration)]
-    found = SequenceMatcher(None, [k for k, _ in tail], [k for k, _ in head],
-                            autojunk=False).find_longest_match(0, len(tail), 0, len(head))
-    if found.size < MIN_MATCH_WORDS:
+    rates = [r for r in (_rate(left_count, left_duration), _rate(len(right_keys), right_duration)) if r]
+    limit = MAX_DROP_OVERLAPS * overlap * max(rates) + DROP_ALLOWANCE_WORDS if rates else None
+    a, b = [k for k, _ in tail], [k for k, _ in head]
+    best, run = None, [0] * (len(b) + 1)                  # run[j]: common run ending at a[i-1], b[j-1]
+    for i in range(1, len(a) + 1):
+        previous, run = run, [0] * (len(b) + 1)
+        for j in range(1, len(b) + 1):
+            if a[i - 1] != b[j - 1]:
+                continue
+            size = run[j] = previous[j - 1] + 1
+            ends = i == len(a) or j == len(b) or a[i] != b[j]
+            if size < MIN_MATCH_WORDS or not ends:
+                continue
+            first_a, first_b = i - size, j - size
+            dropped = (len(a) - first_a) + first_b       # words cut from the two sides
+            if limit is not None and dropped > limit:
+                continue
+            if best is None or size > best[0] or (size == best[0] and dropped < best[3]):
+                best = (size, first_a, first_b, dropped)
+    if best is None:
         return None
-    return [(tail[found.a + n][1], head[found.b + n][1]) for n in range(found.size)]
+    size, first_a, first_b, _ = best
+    return [(tail[first_a + n][1], head[first_b + n][1]) for n in range(size)]
 
 
 def _link_speakers(run, nxt, pairs, state, part):
@@ -145,13 +181,20 @@ def _link_speakers(run, nxt, pairs, state, part):
     return _relabel(nxt, mapping)
 
 
-def _merge_model(run, nxt, merge_text, part):
+def _merge_model(run, nxt, merge_text, part, overlap, durations, left_chars):
+    """Merge the boundary windows with the model; output that drops more than the
+    overlap's text (or adds more than a tenth) is rejected."""
     left, right = "".join(run.tokens), "".join(nxt.tokens)
-    tail, head = left[-MODEL_WINDOW_CHARS:], right[:MODEL_WINDOW_CHARS]
+    rates = [r for r in (_rate(left_chars, durations[0]), _rate(len(right), durations[1])) if r]
+    expected = overlap * max(rates) if rates else 0
+    size = max(MODEL_WINDOW_CHARS, int(MODEL_WINDOW_OVERLAPS * expected))
+    tail, head = left[-size:], right[:size]
     merged = (merge_text(tail.strip(), head.strip()) or "").strip().strip("\"'")
     if not merged:
         raise ValueError(f"merge model returned nothing at the boundary before part {part}")
-    if len(merged) < 0.8 * max(len(tail.strip()), len(head.strip())) or \
+    given = len(tail.strip()) + len(head.strip())
+    allowed = MAX_DROP_OVERLAPS * expected + DROP_ALLOWANCE_CHARS if rates else 0.2 * given
+    if len(merged) < max(0.8 * max(len(tail.strip()), len(head.strip())), given - allowed) or \
             len(merged) > 1.1 * (len(tail) + len(head)):
         raise ValueError(f"merge model output at the boundary before part {part} "
                          f"dropped or invented text ({len(merged)} chars from {len(tail)}+{len(head)})")
@@ -160,8 +203,9 @@ def _merge_model(run, nxt, merge_text, part):
     return _Run(tokens, [None] * len(tokens), False)
 
 
-def _join(run, nxt, overlap, durations, merge_text, speakers, state, part, boundary):
-    pairs = _match(run, nxt, overlap, *durations)
+def _join(run, nxt, overlap, durations, merge_text, speakers, state, part, boundary, last):
+    """``last``: the previous part's own tokens (the run holds every part joined so far)."""
+    pairs = _match(run, nxt, overlap, *durations, len(_keys(last.tokens, "".join(last.tokens))))
     if speakers:
         nxt = _link_speakers(run, nxt, pairs, state, part)
     if pairs:
@@ -177,7 +221,7 @@ def _join(run, nxt, overlap, durations, merge_text, speakers, state, part, bound
     if merge_text is None:
         raise ValueError(f"no words match at the boundary before part {part}, the parts have "
                          f"no alignment and no merge model was given")
-    return _merge_model(run, nxt, merge_text, part), "model"
+    return _merge_model(run, nxt, merge_text, part, overlap, durations, len("".join(last.tokens))), "model"
 
 
 def _segments(run):
@@ -207,7 +251,7 @@ def reconstruct(parts: List[Part], *, overlap: float,
     part lacks alignment), warnings and the method used at each boundary."""
     pieces, segments, boundaries = [], [], []
     state = {"max": 0, "warnings": []}
-    run, previous = None, None
+    run, previous, last = None, None, None
     all_segments = all(p.segments is not None for p in parts if not p.failed and not p.no_speech)
 
     def close():
@@ -241,7 +285,7 @@ def reconstruct(parts: List[Part], *, overlap: float,
             durations = ((previous.end or part.start) - previous.start, (part.end or part.start) - part.start)
             try:
                 run, method = _join(run, nxt, overlap, durations, merge_text, speakers, state,
-                                    part.index, boundary)
+                                    part.index, boundary, last)
             except (ValueError, TranscriptionError) as exc:   # rate limits propagate
                 raise ReconstructionError(f"cannot reconstruct the transcript: {exc}",
                                           result=_unmerged(parts)) from exc
@@ -249,7 +293,7 @@ def reconstruct(parts: List[Part], *, overlap: float,
         else:
             close()
             run = nxt
-        previous = part
+        previous, last = part, nxt
     close()
     return {"text": "\n\n".join(pieces), "segments": segments if all_segments else None,
             "warnings": state["warnings"], "boundaries": boundaries}

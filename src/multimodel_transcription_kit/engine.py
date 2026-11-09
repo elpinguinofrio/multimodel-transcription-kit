@@ -526,6 +526,8 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
             chunks = split_audio(str(prepared), chunk_sec=limit - overlap_seconds,
                                  overlap_sec=overlap_seconds, output_dir=str(work / "chunks"))
 
+        fallback_failures = {}            # part number -> why each fallback failed it
+
         def rescue(number, chunk, first_error):
             """This part from the first of part_fallbacks that can transcribe it; else first_error."""
             length = (chunk.end_time or duration or 0) - chunk.start_time
@@ -553,6 +555,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
                                 f"transcribed by {other.name}")
                 return {**result, "transcribed_by": other.name}
             warnings.append(f"part {number}: no fallback could transcribe it ({'; '.join(tried)})")
+            fallback_failures[number] = tried
             raise first_error
 
         def send(number, chunk):
@@ -647,7 +650,10 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
                 for part, result in zip(parts, results)]
         if errors:
             failed = [p.index for p in parts if p.failed]
-            raise IncompleteTranscriptError(f"{len(failed)} of {len(chunks)} parts failed: {failed}",
+            why = "; ".join(f"part {n}: {describe(errors_by_part[n])}"
+                            + (f", then {', '.join(fallback_failures[n])}" if fallback_failures.get(n) else "")
+                            for n in failed)
+            raise IncompleteTranscriptError(f"{len(failed)} of {len(chunks)} parts failed: {failed} ({why})",
                                             result=output, failed_parts=failed)
         return output
     finally:

@@ -124,3 +124,19 @@ def test_selection_offers_only_reachable_models_as_part_fallbacks(recording, mon
     result = selection.transcribe_best(recording, [spec("lite"), spec("down"), spec("flash")],
                                        probe=lambda s: s.name != "down", **OPTIONS)
     assert result["text"] == FULL and "down" not in calls and calls["flash"] == [1]
+
+
+def test_the_error_says_why_each_model_failed_the_part(recording, monkeypatch):
+    fake(monkeypatch, {"lite": lambda i: SILENCE if i == 1 else speech(i),
+                       "flash": lambda i: ProviderError("PROMPT BLOCKED: SAFETY")})
+    with pytest.raises(IncompleteTranscriptError) as caught:
+        engine.transcribe_file(recording, spec("lite"), part_fallbacks=[spec("flash")], **OPTIONS)
+    message = str(caught.value)
+    assert "part 2" in message and "SILENCE" in message and "flash" in message and "SAFETY" in message
+
+
+def test_selection_reports_why_the_part_failed(recording, monkeypatch):
+    fake(monkeypatch, {"lite": lambda i: SILENCE if i == 1 else speech(i),
+                       "flash": lambda i: ProviderError("PROMPT BLOCKED: SAFETY")})
+    with pytest.raises(NoModelAvailableError, match="SAFETY"):
+        selection.transcribe_best(recording, [spec("lite"), spec("flash")], probe=lambda s: True, **OPTIONS)
