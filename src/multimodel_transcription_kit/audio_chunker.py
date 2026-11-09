@@ -54,7 +54,7 @@ def get_duration(file_path: str) -> Optional[float]:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, errors="replace",
             check=True,
         )
         return float(result.stdout.strip())
@@ -80,7 +80,7 @@ def _run_ffmpeg(args: List[str]) -> subprocess.CompletedProcess:
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=True, errors="replace",
         check=True,
     )
     return result

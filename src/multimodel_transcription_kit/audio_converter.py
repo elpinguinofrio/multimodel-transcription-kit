@@ -96,7 +96,7 @@ class AudioConverter:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=True,
-                text=True
+                text=True, errors="replace"
             )
 
             logger.debug(f"ffmpeg MP3 conversion completed: {result.stderr}")
@@ -144,7 +144,7 @@ class AudioConverter:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=True,
-                text=True
+                text=True, errors="replace"
             )
 
             logger.debug(f"ffmpeg conversion completed: {result.stderr}")
@@ -177,7 +177,7 @@ class AudioConverter:
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                text=True, errors="replace",
                 check=True,
             )
             return float(result.stdout.strip())
@@ -212,7 +212,7 @@ class AudioConverter:
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                text=True, errors="replace",
                 check=True,
             )
 

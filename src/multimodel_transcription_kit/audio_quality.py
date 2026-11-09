@@ -41,7 +41,7 @@ _ANALYSIS = ("aresample=16000,aformat=channel_layouts=mono,asetnsamples=n=800,"
 
 def _ffmpeg(args):
     try:
-        return subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", *args], capture_output=True, text=True)
+        return subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", *args], capture_output=True, text=True, errors="replace")
     except FileNotFoundError as exc:
         raise AudioPreparationError("ffmpeg is required to assess loudness") from exc
 
