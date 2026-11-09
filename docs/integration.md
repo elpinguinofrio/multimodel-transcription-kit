@@ -125,6 +125,25 @@ If they overlap anyway, the server's 429 is handled: it waits as long as the ser
 - **Clip Smith:** doesn't call the core today. Its transcription is local whisper plus `scripts/transcribe/correct_transcript_gemini.py`.
   Any new cloud transcription step should use the snippet above with the shared config, not a new Gemini client.
 
+## Changes after 0.4.0 (unreleased)
+
+Additions only; existing calls keep working.
+
+- `parallel_chunks = N` on a provider sends up to N parts of a long recording at once
+  (`ModelSpec.parallel_chunks`, default 1).
+- `[[profile]]` blocks name model orders; `runner.ranked_models(config, profile=...)` and
+  `--profile` pick one, `[defaults] profile` sets the default.
+- A `[SILENCE]` or empty reply for a part that clearly holds speech raises
+  `FalseSilenceError` (a `ProviderError`), so that part fails instead of vanishing.
+- `transcribe_file(..., part_fallbacks=[ModelSpec, ...])` retries a failed part with
+  those models, that part only. `transcribe_best` passes the later usable models
+  itself. `IncompleteTranscriptError.untried` names fallbacks that could not take the
+  part (too long for them, or no timestamps).
+- Behavior change: joins between parts are stricter. A word match that would cut more
+  than about one overlap of words is not used, and a merge-model reply that drops more
+  than about one overlap of text is rejected. A join that used to lose speech silently
+  may now raise `ReconstructionError` (its `result` holds the unmerged parts).
+
 ## Migration notes: 0.4.0 naming change
 
 The distribution and executable are `multimodel-transcription-kit`; the Python
