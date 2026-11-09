@@ -70,35 +70,47 @@ base_url = "http://127.0.0.1:8765/v1"
 #   word_times = true -> may supply word times, tried in this same order. Gemini's own
 #                times are generated text (measured off by tens of seconds), so the best
 #                text model writes the text and a word_times model supplies the times.
+#   chunk_seconds = longest part sent in one request; longer recordings are split into
+#                parts this long (with 10 s of overlap). Gemini 1800, Groq and local
+#                servers 1200 by default; flash-lite 600: on a 35-minute public audiobook
+#                chapter its 30-minute parts both hit the output limit (2026-11-09), while
+#                9-minute parts matched gemini-3.8-flash's transcript.
 
 [[model]]
 name = "gemini-3.8-flash"
 providers = ["my-agy:gemini-3.8-flash-low", "my-aistudio", "my-proxy"]
+chunk_seconds = 1800
 
 [[model]]
 name = "gemini-3.5-transcribe"
 providers = ["my-aistudio", "my-proxy"]
+chunk_seconds = 1800
 
 [[model]]
 name = "gemini-3-flash-preview"
 providers = ["my-aistudio", "my-proxy"]
+chunk_seconds = 1800
 
 [[model]]
 name = "gemini-3.6-flash"
 providers = ["my-aistudio", "my-proxy"]
+chunk_seconds = 1800
 
 [[model]]
 name = "gemini-3.5-flash-lite"
 providers = ["my-aistudio", "my-proxy"]
+chunk_seconds = 600
 
 [[model]]
 name = "parakeet-tdt-0.6b-v3"
 providers = ["my-local-parakeet"]
+chunk_seconds = 1200
 word_times = true
 
 [[model]]
 name = "whisper-large-v3-turbo"
 providers = ["my-groq"]
+chunk_seconds = 1200
 word_times = true
 
 # Profiles: named model orders; a caller picks one with --profile <name>. Each lists the

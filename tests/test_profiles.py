@@ -144,3 +144,14 @@ def test_example_toml_has_quality_and_balanced_profiles():
     assert runner.profile_names(parser) == ["quality", "balanced"]
     assert runner.ranked_models(parser, "quality")[0].startswith("gemini-3.8-flash@")
     assert runner.ranked_models(parser, "balanced")[0].startswith("gemini-3.5-flash-lite@")
+
+
+def test_example_toml_sets_each_models_longest_part():
+    """Every model states its longest part; flash-lite's is 10 minutes (seen live 2026-11-09:
+    30-minute parts hit the output limit, and one 18-minute part stopped 14 minutes in)."""
+    import tomllib
+    from pathlib import Path
+    data = tomllib.loads((Path(__file__).resolve().parents[1] / "transcription.example.toml").read_text())
+    lengths = {model["name"]: model.get("chunk_seconds") for model in data["model"]}
+    assert all(lengths.values()), [name for name, seconds in lengths.items() if not seconds]
+    assert lengths["gemini-3.5-flash-lite"] == 600

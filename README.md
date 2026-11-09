@@ -22,6 +22,9 @@ do not already have a configuration**. It has three parts:
   sends up to N parts of a long recording at once (default 1, one after another).
 - **Models**, best first: one `[[model]]` block each, listing its `providers` in the
   order to try. `word_times = true` marks the models that may supply word times.
+  `chunk_seconds` is the longest part one request carries; longer recordings are split.
+  The example sets it for every model; `gemini-3.5-flash-lite` gets 600 (10 minutes),
+  since its 30-minute parts came back incomplete.
 - **Profiles** (optional): named model orders, one `[[profile]]` block each with
   `name` and `models`, best first. See [Quality or cost](#quality-or-cost).
 
