@@ -104,8 +104,8 @@ word_times = true
 # Profiles: named model orders; a caller picks one with --profile <name>. Each lists the
 # models it may use, best first; paid routes still come after every free one.
 # quality: content (clips, videos) - the most accurate models first.
-# balanced: bulk (hours of meetings) - flash-lite first: cheaper and faster, about 2.5x the
-#   word errors of gemini-3.8-flash on the 101 s sample (README).
+# balanced: bulk (hours of meetings) - flash-lite first: cheaper and faster, less
+#   accurate in the owner's tests (README).
 
 [[profile]]
 name = "quality"

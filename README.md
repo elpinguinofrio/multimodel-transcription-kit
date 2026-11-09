@@ -31,8 +31,8 @@ One config can hold several model orders, so each caller picks what its work nee
 
 | Profile | For | First model | Trade-off |
 |---|---|---|---|
-| `quality` | content: clips, videos, anything published | `gemini-3.8-flash` | most accurate; slower and pricier |
-| `balanced` | bulk: hundreds of hours of meetings, notes | `gemini-3.5-flash-lite` | cheaper and faster; about 2.5x the word errors (16.8% vs 6-7% on the 101 s sample) |
+| `quality` | content: clips, videos, anything published | `gemini-3.8-flash` | preferred in the [owner's review](#russian-sample-benchmark); slower and pricier |
+| `balanced` | bulk: hundreds of hours of meetings, notes | `gemini-3.5-flash-lite` | cheaper and faster; less accurate in the owner's tests |
 
 ```sh
 multimodel-transcription-kit meeting.m4a --profile balanced -d notes/
