@@ -13,7 +13,7 @@ python -m pip install ".[live]"
 ```
 
 From a checkout, copy `transcription.example.toml` to `transcription.toml` **if you
-do not already have a configuration**. It has two parts:
+do not already have a configuration**. It has three parts:
 
 - **Providers**: one `[[aistudio]]`, `[[antigravity]]` or `[[openai]]` block per
   account, each with your own `name` and optional `key_env`, `base_url` and
@@ -22,6 +22,27 @@ do not already have a configuration**. It has two parts:
   sends up to N parts of a long recording at once (default 1, one after another).
 - **Models**, best first: one `[[model]]` block each, listing its `providers` in the
   order to try. `word_times = true` marks the models that may supply word times.
+- **Profiles** (optional): named model orders, one `[[profile]]` block each with
+  `name` and `models`, best first. See [Quality or cost](#quality-or-cost).
+
+### Quality or cost
+
+One config can hold several model orders, so each caller picks what its work needs:
+
+| Profile | For | First model | Trade-off |
+|---|---|---|---|
+| `quality` | content: clips, videos, anything published | `gemini-3.8-flash` | most accurate; slower and pricier |
+| `balanced` | bulk: hundreds of hours of meetings, notes | `gemini-3.5-flash-lite` | cheaper and faster; about 2.5x the word errors (16.8% vs 6-7% on the 101 s sample) |
+
+```sh
+multimodel-transcription-kit meeting.m4a --profile balanced -d notes/
+```
+
+`[defaults] profile` names the one used when a caller passes no `--profile`; the example
+sets `quality`, so callers get the most accurate order unless they ask for less. Without
+any `[[profile]]`, the `[[model]]` block order is the order. A profile uses only the models
+it lists, and paid routes still come after every free one. Word-time models keep the
+`[[model]]` block order.
 
 Every free route of every model is tried before any `costs_money` account. Set
 `[secrets] env_file` to an existing key file; personal configuration and keys stay out
@@ -41,8 +62,8 @@ multimodel-transcription-kit --list-models --config transcription.ini
 Use model names present in your configuration. `notes/` must already exist.
 Without `-d`, text goes to stdout and diagnostics to stderr. With `-d`, files are
 named `<name>.<model>.md`; reruns add `.(2)`, `.(3)`, etc., preserving earlier files.
-`-m` selects exactly one model without fallback. Otherwise `[models] ranking`
-controls selection and permitted fallback. `--list-models` makes provider metadata
+`-m` selects exactly one model (trying its providers in order). Otherwise the profile's
+order (see above) controls selection and permitted fallback. `--list-models` makes provider metadata
 requests; it does not transcribe audio. `--help` needs no configuration or provider.
 
 The checkout's `./multimodel-transcription-kit` is an optional host/VM launcher backed by a

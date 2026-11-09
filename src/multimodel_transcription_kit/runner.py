@@ -54,9 +54,21 @@ def load_secrets(config):
         load_env_file()
 
 
-def ranked_models(config):
-    """Model names best-first, as the owner ordered them in the config."""
-    raw = config.get("models", "ranking", fallback="")
+def profile_names(config):
+    """The config's named model orders ([profiles]), in file order."""
+    return list(config["profiles"]) if config.has_section("profiles") else []
+
+
+def ranked_models(config, profile=None):
+    """Model names best-first: the named profile's order, else the [defaults] profile's,
+    else [models] ranking. An unknown profile raises ValueError naming the known ones."""
+    profile = profile or config.get("defaults", "profile", fallback="").strip() or None
+    if profile is not None:
+        if profile not in profile_names(config):
+            raise ValueError(f"No profile named {profile!r}; known: {', '.join(profile_names(config)) or 'none'}")
+        raw = config.get("profiles", profile)
+    else:
+        raw = config.get("models", "ranking", fallback="")
     names = [name.strip() for name in raw.split(",") if name.strip()]
     return [name for name in names if config.has_section(f"model.{name}")]
 
@@ -192,6 +204,8 @@ def build_parser():
     parser.add_argument("--timeout", type=float,
                         help="Seconds to wait for each provider request (default: 300; HTTP models 3600)")
     parser.add_argument("--config", help=f"Config file; defaults to ./{DEFAULT_CONFIG_NAME}")
+    parser.add_argument("--profile", help="Named model order from the config's profiles, e.g. quality or "
+                                          "balanced; defaults to the config's [defaults] profile")
     parser.add_argument("--enhance", action=argparse.BooleanOptionalAction, default=None,
                         help="Transcribe an enhanced temporary copy (default: automatic when loudness or noise "
                              "is a problem; --no-enhance never, --enhance always)")
@@ -348,7 +362,10 @@ def main(argv=None):
     from .usage import UsageLog
     usage_log = UsageLog.from_parser(config)
 
-    ranking = ranked_models(config)
+    try:
+        ranking = ranked_models(config, args.profile)
+    except ValueError as error:
+        parser.error(str(error))
     if not ranking:
         parser.error("No models configured; add a [models] ranking and one [model.<name>] section")
 

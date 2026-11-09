@@ -6,6 +6,8 @@
 env_file = "~/.config/transcription/.env"
 
 [defaults]
+# The model order used when the caller names no --profile (see [[profile]] at the end).
+profile = "quality"
 # The instruction sent to Gemini and Antigravity models (Whisper-style models get only the hints).
 prompt = "Transcribe the following audio to plain text. Do not include timestamps or time markers. Do NOT ask for the audio file. Do NOT converse. Write a strictly verbatim transcript in the language spoken: Russian in Cyrillic, English in Latin script; if the speaker switches languages, keep each part in the language spoken. Never translate. Keep every filler (а, э-э, ну, вот), repetition and self-correction exactly as spoken; keep colloquial pronunciations (чо, щас). Do not paraphrase, shorten or fix grammar. Write English brand names in Latin script. If a fragment is unintelligible, write <неразборчиво> instead of guessing. Only if the audio contains no speech at all, output exactly '[SILENCE]'."
 
@@ -86,6 +88,10 @@ name = "gemini-3.6-flash"
 providers = ["my-aistudio", "my-proxy"]
 
 [[model]]
+name = "gemini-3.5-flash-lite"
+providers = ["my-aistudio", "my-proxy"]
+
+[[model]]
 name = "parakeet-tdt-0.6b-v3"
 providers = ["my-local-parakeet"]
 word_times = true
@@ -94,3 +100,19 @@ word_times = true
 name = "whisper-large-v3-turbo"
 providers = ["my-groq"]
 word_times = true
+
+# Profiles: named model orders; a caller picks one with --profile <name>. Each lists the
+# models it may use, best first; paid routes still come after every free one.
+# quality: content (clips, videos) - the most accurate models first.
+# balanced: bulk (hours of meetings) - flash-lite first: cheaper and faster, about 2.5x the
+#   word errors of gemini-3.8-flash on the 101 s sample (README).
+
+[[profile]]
+name = "quality"
+models = ["gemini-3.8-flash", "gemini-3.5-transcribe", "gemini-3-flash-preview", "gemini-3.6-flash",
+          "gemini-3.5-flash-lite", "parakeet-tdt-0.6b-v3", "whisper-large-v3-turbo"]
+
+[[profile]]
+name = "balanced"
+models = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash", "parakeet-tdt-0.6b-v3",
+          "whisper-large-v3-turbo"]

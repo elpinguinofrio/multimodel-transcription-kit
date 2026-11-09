@@ -12,12 +12,21 @@
     providers = ["agy-main:gemini-3.8-flash-low", "kerocat"]   # "provider:id" if it names it differently
     word_times = true                  # optional: may supply word times (same order)
 
+    [[profile]]                        # optional: a named model order a caller picks with --profile
+    name = "balanced"
+    models = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]   # only these, in this order
+
+    [defaults]
+    profile = "quality"                # the profile used when the caller names none
+
 The rest ([secrets], [defaults], [limits], [vocabulary], [usage], [fusion]) is as in the INI.
 
 ``load`` turns the file into the ConfigParser shape the CLI already uses: one
 ``[model.<model>@<provider>]`` section per route, ``[models] ranking`` with every free
 route in model order and then every paid route, ``timing_ranking`` likewise for
 word_times models, and ``[model_routes]`` mapping each model name to its routes.
+Each ``[[profile]]`` becomes ``[profiles] <name>`` (its models' routes, free then paid);
+``[defaults] profile`` also sets ``[models] ranking`` to that profile's order.
 ``convert_ini`` writes a TOML file from an existing INI config.
 """
 
@@ -29,6 +38,7 @@ DEFAULT_BASE_URL = {"openai": "https://api.openai.com/v1"}
 PROVIDER_KEYS = {"name", "key_env", "base_url", "costs_money", "parallel_chunks", "note"}
 MODEL_KEYS = {"name", "providers", "word_times", "prompt", "temperature", "chunk_seconds", "merge_model",
               "capabilities", "rpm", "tpm", "rpd"}
+PROFILE_KEYS = {"name", "models", "note"}
 PLAIN_SECTIONS = ("secrets", "defaults", "limits", "vocabulary", "usage", "fusion")
 LIST_JOIN = {("vocabulary", "terms"): ", ", ("vocabulary", "corrections"): "\n", ("limits", "tiers"): ", "}
 
@@ -131,7 +141,7 @@ def _routes(data, providers):
 def load(path):
     """A ConfigParser with the CLI's sections, built from a transcription.toml."""
     data = _read(path)
-    known = set(PLAIN_SECTIONS) | set(TYPES) | {"model"}
+    known = set(PLAIN_SECTIONS) | set(TYPES) | {"model", "profile"}
     unknown = set(data) - known
     if unknown:
         raise ConfigError(f"unknown section(s) {', '.join(sorted(unknown))}; "
@@ -161,7 +171,45 @@ def load(path):
     for block, route, _ in routes:
         existing = parser["model_routes"].get(block["name"])
         parser["model_routes"][block["name"]] = f"{existing}, {route}" if existing else route
+    profiles = _profiles(data, routes)
+    if profiles:
+        parser["profiles"] = profiles
+    default = parser.get("defaults", "profile", fallback="").strip()
+    if default:
+        if default not in profiles:
+            raise ConfigError(f"[defaults] profile: no profile named {default!r} "
+                              f"(known: {', '.join(profiles) or 'none'})")
+        parser["models"]["ranking"] = profiles[default]
     return parser
+
+
+def _profiles(data, routes):
+    """{profile name: its routes as a ranking}: listed models in order, free routes before paid."""
+    blocks = data.get("profile", [])
+    if not isinstance(blocks, list):
+        raise ConfigError("[profile] must be written [[profile]] (one block per profile)")
+    models = {}
+    for block, route, options in routes:
+        models.setdefault(block["name"], []).append((route, options.get("costs_money") == "true"))
+    profiles = {}
+    for block in blocks:
+        name = block.get("name")
+        if not name or not isinstance(name, str):
+            raise ConfigError("a [[profile]] block has no name")
+        unknown = set(block) - PROFILE_KEYS
+        if unknown:
+            raise ConfigError(f"[[profile]] {name}: unknown setting(s) {', '.join(sorted(unknown))}")
+        if name in profiles:
+            raise ConfigError(f"two profiles are named {name!r}")
+        listed = block.get("models")
+        if not listed or not isinstance(listed, list):
+            raise ConfigError(f"[[profile]] {name}: list its models, e.g. models = [\"my-model\"]")
+        missing = [m for m in listed if m not in models]
+        if missing:
+            raise ConfigError(f"[[profile]] {name}: no model named {missing[0]!r} (known: {', '.join(models)})")
+        chosen = [r for m in listed for r in models[m]]
+        profiles[name] = ", ".join([r for r, paid in chosen if not paid] + [r for r, paid in chosen if paid])
+    return profiles
 
 
 # ───────────────────────── INI -> TOML ──────────────────────────
@@ -268,4 +316,12 @@ def convert_ini(parser):
                 raise ConfigError(f"[model.{name}]: setting {key!r} has no TOML equivalent")
             out.append(f"{key} = {_value('model', key, raw)}")
         out.append("")
+    if parser.has_section("profiles"):
+        out.append("# Profiles: named model orders; a caller picks one with --profile.")
+        for name, raw in parser["profiles"].items():
+            listed = [m.strip() for m in raw.split(",") if m.strip()]
+            missing = [m for m in listed if m not in order]
+            if missing:
+                raise ConfigError(f"[profiles] {name}: no model named {missing[0]!r}")
+            out += ["[[profile]]", f"name = {_q(name)}", "models = [" + ", ".join(map(_q, listed)) + "]", ""]
     return "\n".join(out).rstrip() + "\n"
