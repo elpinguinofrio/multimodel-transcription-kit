@@ -427,11 +427,33 @@ def _failed(result):
     return text.startswith("[PARSE_ERROR]") or "[TRANSCRIPTION FAILED]" in text
 
 
+def _request_settings(spec, warnings, *, prompt, temperature, language, terms):
+    """The prompt, temperature, language and vocabulary hint one model's requests take."""
+    prompt = prompt if prompt is not None else spec.prompt
+    if spec.kind == "gemini" and not spec.live:
+        temperature = GEMINI_DEFAULT_TEMPERATURE if temperature is None and spec.temperature is None \
+            else (temperature if temperature is not None else spec.temperature)
+    elif temperature is not None or spec.temperature is not None:
+        warnings.append(f"temperature is not sent to {spec.kind} models; the provider default applies")
+        temperature = None
+    if spec.live and (prompt or language):
+        warnings.append("Live models take no prompt or language; both were ignored")
+        prompt = language = None
+    from .vocabulary import gemini_hint, whisper_hint
+    if spec.live:
+        hint = ""
+        if terms:
+            warnings.append("Live models take no prompt; vocabulary hints were skipped")
+    else:
+        hint = gemini_hint(terms) if spec.kind in ("gemini", "agy") else whisper_hint(terms)
+    return {"language": language, "prompt": prompt, "hint": hint, "temperature": temperature}
+
+
 def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, temperature=None,
                     speakers=None, sounds=None, timestamps=None, enhance=None, enhanced_dir=None,
                     keep_enhanced=False, overlap_seconds=OVERLAP_SECONDS, limiter=None, usage_log=None,
                     retry_base_delay=2.0, max_retries=4, timeout=None, gemini_api=None, groq_api=None,
-                    keep_raw=False, terms=None, corrections=None):
+                    keep_raw=False, terms=None, corrections=None, part_fallbacks=None):
     """Transcribe one recording with one model; long recordings are split and rebuilt.
 
     speakers / sounds (bool) and timestamps ("none", "major", "phrase") default to
@@ -450,6 +472,10 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
     terms (list) are sent to the model as spelling hints; corrections
     ([(heard, right)]) fix known mishearings in the finished text (vocabulary.py).
 
+    part_fallbacks (ModelSpecs, best first): a part this model fails (an error, a
+    [SILENCE] reply over speech) is sent to these models in order, that part only; the
+    other parts keep this model's text. Quota, feature and audio errors still stop the run.
+
     keep_raw=True adds ``parts``:
     each request's exact parameters and raw provider response (for receipts).
 
@@ -463,24 +489,9 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
     if not source.is_file():
         raise FileNotFoundError(f"Audio file not found: {source}")
     features, warnings = resolve_features(spec, speakers, sounds, timestamps)
-    prompt = prompt if prompt is not None else spec.prompt
-    if spec.kind == "gemini" and not spec.live:
-        temperature = GEMINI_DEFAULT_TEMPERATURE if temperature is None and spec.temperature is None \
-            else (temperature if temperature is not None else spec.temperature)
-    elif temperature is not None or spec.temperature is not None:
-        warnings.append(f"temperature is not sent to {spec.kind} models; the provider default applies")
-        temperature = None
-    if spec.live and (prompt or language):
-        warnings.append("Live models take no prompt or language; both were ignored")
-        prompt = language = None
-    from .vocabulary import gemini_hint, whisper_hint
-    if spec.live:
-        hint = ""
-        if terms:
-            warnings.append("Live models take no prompt; vocabulary hints were skipped")
-    else:
-        hint = gemini_hint(terms) if spec.kind in ("gemini", "agy") else whisper_hint(terms)
-    settings = {"language": language, "prompt": prompt, "hint": hint, "temperature": temperature,
+    asked = {"prompt": prompt, "temperature": temperature, "language": language, "terms": terms}
+    request = _request_settings(spec, warnings, **asked)
+    settings = {**request,
                 "overlap_seconds": overlap_seconds, "features": features, "keep_raw": keep_raw}
     clients = _Clients(limiter, usage_log, retry_base_delay, max_retries, timeout, gemini_api, groq_api, spec=spec)
     assessment, enhanced = None, None
@@ -515,15 +526,51 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
             chunks = split_audio(str(prepared), chunk_sec=limit - overlap_seconds,
                                  overlap_sec=overlap_seconds, output_dir=str(work / "chunks"))
 
+        def rescue(number, chunk, first_error):
+            """This part from the first of part_fallbacks that can transcribe it; else first_error."""
+            length = (chunk.end_time or duration or 0) - chunk.start_time
+            tried = []
+            for index, other in enumerate(part_fallbacks):
+                try:
+                    other_features, _ = resolve_features(other, speakers, sounds, timestamps)
+                    if features["timestamps"] != "none" and other_features["timestamps"] == "none":
+                        raise UnsupportedFeatureError(f"{other.name} cannot supply timestamps")
+                    if length > _chunk_seconds(other):
+                        raise ValueError(f"the part is longer than {other.name}'s {_chunk_seconds(other):.0f}s limit")
+                    folder = work / f"part{number}-fallback{index}"
+                    folder.mkdir(parents=True, exist_ok=True)
+                    path, _ = _prepare(Path(chunk.path), other, folder, length)
+                    other_settings = {**settings, **_request_settings(other, [], **asked), "features": other_features}
+                    other_clients = _Clients(limiter, usage_log, retry_base_delay, max_retries, timeout, spec=other)
+                    result = _request_with_retry(other, path, other_settings, other_clients, warnings, number)
+                    if _failed(result):
+                        raise ValueError(f"part {number} returned {result['text'][:200]!r}")
+                    _check_silence(result, path, number)
+                except Exception as exc:          # this fallback failed; try the next one
+                    tried.append(f"{other.name}: {describe(exc)}")
+                    continue
+                warnings.append(f"part {number}: {spec.name} failed ({describe(first_error)}); "
+                                f"transcribed by {other.name}")
+                return {**result, "transcribed_by": other.name}
+            warnings.append(f"part {number}: no fallback could transcribe it ({'; '.join(tried)})")
+            raise first_error
+
         def send(number, chunk):
             if len(chunks) > 1:
                 logger.info("%s: part %d/%d (%.0fs-%.0fs)", spec.name, number, len(chunks),
                             chunk.start_time, chunk.end_time)
-            result = _request_with_retry(spec, Path(chunk.path), settings, clients, warnings, number)
-            if _failed(result):
-                raise ValueError(f"part {number} returned {result['text'][:200]!r}")
-            _check_silence(result, Path(chunk.path), number)
-            return result
+            try:
+                result = _request_with_retry(spec, Path(chunk.path), settings, clients, warnings, number)
+                if _failed(result):
+                    raise ValueError(f"part {number} returned {result['text'][:200]!r}")
+                _check_silence(result, Path(chunk.path), number)
+                return result
+            except (RateLimitError, UnsupportedFeatureError, AudioPreparationError):
+                raise
+            except Exception as exc:
+                if not part_fallbacks or len(chunks) == 1:
+                    raise
+                return rescue(number, chunk, exc)
 
         results, parts, errors, errors_by_part = [], [], [], {}
         outcomes = list(_send_parts(send, chunks, spec.parallel_chunks))

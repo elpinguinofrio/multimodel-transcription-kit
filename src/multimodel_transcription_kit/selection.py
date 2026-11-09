@@ -9,7 +9,8 @@ feature. A failure moves to the next ranked model only when fallback is allowed
 import os
 from dataclasses import dataclass
 
-from .errors import AudioPreparationError, NoModelAvailableError, TranscriptionError, UnsupportedFeatureError
+from .errors import (AudioPreparationError, IncompleteTranscriptError, NoModelAvailableError, TranscriptionError,
+                     UnsupportedFeatureError)
 from .rate_limiter import RateLimitError
 
 KEY_FOR_KIND = {"gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY"}
@@ -49,12 +50,25 @@ def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow
         from .engine import transcribe_file as transcribe
     attempts = []
     features = {k: options.get(k) for k in ("speakers", "sounds", "timestamps")}
-    for spec in specs:
-        available = probe(spec)
-        if not isinstance(available, Availability):
-            available = Availability(bool(available), "" if available else "not reachable")
-        exhausted = limiter.exhausted(spec.limit_key) if limiter is not None and available.ok else None
-        reason = available.reason if not available.ok else exhausted and f"quota: {exhausted}"
+    checked = {}
+
+    def blocked(spec):
+        """Why ``spec`` cannot run now ("" when it can); each model is checked once."""
+        if spec.name not in checked:
+            available = probe(spec)
+            if not isinstance(available, Availability):
+                available = Availability(bool(available), "" if available else "not reachable")
+            exhausted = limiter.exhausted(spec.limit_key) if limiter is not None and available.ok else None
+            checked[spec.name] = (available.reason if not available.ok else exhausted and f"quota: {exhausted}") or ""
+        return checked[spec.name]
+    for position, spec in enumerate(specs):
+        reason = blocked(spec)
+        # A part this model fails goes to the later usable models, that part only.
+        later = [s for s in specs[position + 1:] if not blocked(s)] if allow_fallback else []
+        if later:
+            options = {**options, "part_fallbacks": later}
+        else:
+            options = {k: v for k, v in options.items() if k != "part_fallbacks"}
         borrow_times = False
         if not reason:
             try:
@@ -94,6 +108,8 @@ def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow
             if not allow_fallback:
                 raise
             attempts.append({"name": spec.name, "error": describe_error(error)})
+            if later and isinstance(error, IncompleteTranscriptError):
+                break             # every later model already failed the missing parts
             continue
         result["selection"] = {"chosen": spec.name, "attempts": attempts, "fallback": allow_fallback}
         return result
