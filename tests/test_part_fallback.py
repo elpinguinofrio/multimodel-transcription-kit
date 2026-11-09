@@ -140,3 +140,12 @@ def test_selection_reports_why_the_part_failed(recording, monkeypatch):
                        "flash": lambda i: ProviderError("PROMPT BLOCKED: SAFETY")})
     with pytest.raises(NoModelAvailableError, match="SAFETY"):
         selection.transcribe_best(recording, [spec("lite"), spec("flash")], probe=lambda s: True, **OPTIONS)
+
+
+def test_selection_still_tries_a_model_that_could_not_take_the_failed_part(recording, monkeypatch):
+    short = ModelSpec(name="short", kind="gemini", model="model-short", chunk_seconds=5)   # parts are longer
+    calls = fake(monkeypatch, {"lite": lambda i: SILENCE if i == 1 else speech(i),
+                               "short": lambda i: ProviderError("down")})
+    with pytest.raises(NoModelAvailableError):
+        selection.transcribe_best(recording, [spec("lite"), short], probe=lambda s: True, **OPTIONS)
+    assert len(calls["short"]) > 1          # it got the whole recording, in its own shorter parts

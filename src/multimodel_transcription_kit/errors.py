@@ -38,12 +38,15 @@ class FalseSilenceError(ProviderError):
 
 class IncompleteTranscriptError(TranscriptionError):
     """Some parts of a long recording failed. ``result`` holds the partial
-    transcript (with failure markers, success=False); ``failed_parts`` are 1-based."""
+    transcript (with failure markers, success=False); ``failed_parts`` are 1-based.
+    ``untried`` names part fallbacks that could not take a failed part (too long for
+    them, or no timestamps), so they never tried it."""
 
-    def __init__(self, message, *, result=None, failed_parts=()):
+    def __init__(self, message, *, result=None, failed_parts=(), untried=()):
         super().__init__(message)
         self.result = result
         self.failed_parts = list(failed_parts)
+        self.untried = list(untried)
 
 
 class ReconstructionError(TranscriptionError):

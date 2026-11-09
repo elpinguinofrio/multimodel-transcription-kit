@@ -108,7 +108,7 @@ def transcribe_best(audio, specs, *, probe, transcribe=None, limiter=None, allow
             if not allow_fallback:
                 raise
             attempts.append({"name": spec.name, "error": describe_error(error)})
-            if later and isinstance(error, IncompleteTranscriptError):
+            if later and isinstance(error, IncompleteTranscriptError) and not error.untried:
                 break             # every later model already failed the missing parts
             continue
         result["selection"] = {"chosen": spec.name, "attempts": attempts, "fallback": allow_fallback}

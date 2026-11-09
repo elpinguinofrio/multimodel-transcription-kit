@@ -527,6 +527,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
                                  overlap_sec=overlap_seconds, output_dir=str(work / "chunks"))
 
         fallback_failures = {}            # part number -> why each fallback failed it
+        untried = set()                   # fallbacks that could not take a failed part at all
 
         def rescue(number, chunk, first_error):
             """This part from the first of part_fallbacks that can transcribe it; else first_error."""
@@ -536,8 +537,10 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
                 try:
                     other_features, _ = resolve_features(other, speakers, sounds, timestamps)
                     if features["timestamps"] != "none" and other_features["timestamps"] == "none":
+                        untried.add(other.name)
                         raise UnsupportedFeatureError(f"{other.name} cannot supply timestamps")
                     if length > _chunk_seconds(other):
+                        untried.add(other.name)
                         raise ValueError(f"the part is longer than {other.name}'s {_chunk_seconds(other):.0f}s limit")
                     folder = work / f"part{number}-fallback{index}"
                     folder.mkdir(parents=True, exist_ok=True)
@@ -654,7 +657,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
                             + (f", then {', '.join(fallback_failures[n])}" if fallback_failures.get(n) else "")
                             for n in failed)
             raise IncompleteTranscriptError(f"{len(failed)} of {len(chunks)} parts failed: {failed} ({why})",
-                                            result=output, failed_parts=failed)
+                                            result=output, failed_parts=failed, untried=sorted(untried))
         return output
     finally:
         shutil.rmtree(work, ignore_errors=True)
