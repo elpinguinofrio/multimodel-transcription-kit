@@ -11,6 +11,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -78,8 +79,14 @@ class ModelSpec:
     account: Optional[str] = None
     base_url: Optional[str] = None
     costs_money: bool = False
+    # How many parts of one long recording are sent at the same time (1 = one after another).
+    parallel_chunks: int = 1
 
     def __post_init__(self):
+        if isinstance(self.parallel_chunks, bool) or not isinstance(self.parallel_chunks, int) \
+                or self.parallel_chunks < 1:
+            raise ValueError(f"Model {self.name}: parallel_chunks must be a whole number of at least 1, "
+                             f"not {self.parallel_chunks!r}")
         if self.kind not in KINDS:
             raise ValueError(f"Unknown provider kind for model {self.name}: {self.kind!r}; use one of {KINDS}")
         if self.kind == "http" and not self.endpoint:
@@ -91,6 +98,15 @@ class ModelSpec:
         def number(key):
             value = options.get(key)
             return float(value) if value not in (None, "") else None
+
+        def whole(key, default):
+            value = options.get(key)
+            if value in (None, ""):
+                return default
+            try:
+                return int(str(value).strip())
+            except ValueError:
+                raise ValueError(f"Model {name}: {key} must be a whole number, not {value!r}") from None
         return cls(name=name, kind=options.get("kind", ""), model=options.get("model") or name,
                    endpoint=options.get("endpoint") or None, prompt=options.get("prompt") or None,
                    temperature=number("temperature"), chunk_seconds=number("chunk_seconds"),
@@ -98,6 +114,7 @@ class ModelSpec:
                    requires_env=options.get("requires_env") or None,
                    account=options.get("account") or None, base_url=options.get("base_url") or None,
                    costs_money=str(options.get("costs_money", "")).lower() in ("1", "true", "yes", "on"),
+                   parallel_chunks=whole("parallel_chunks", 1),
                    capabilities=frozenset(c.strip() for c in options["capabilities"].split(",") if c.strip())
                    if options.get("capabilities") is not None else None)
 
@@ -154,6 +171,7 @@ class _Clients:
         self.limiter, self.usage_log = limiter, usage_log
         self.retry_base_delay, self.max_retries, self.timeout = retry_base_delay, max_retries, timeout
         self._gemini, self._groq = gemini, groq
+        self._lock = threading.Lock()   # parts sent at the same time share one client
 
     def _options(self):
         return dict(rate_limiter=self.limiter, usage_log=self.usage_log,
@@ -161,6 +179,10 @@ class _Clients:
 
     @property
     def gemini(self):
+        with self._lock:
+            return self._make_gemini()
+
+    def _make_gemini(self):
         if self._gemini is None:
             from .gemini_client import GeminiAPI
             route = {"key_env": self.spec.requires_env, "base_url": self.spec.base_url} if self.spec else {}
@@ -169,6 +191,10 @@ class _Clients:
 
     @property
     def groq(self):
+        with self._lock:
+            return self._make_groq()
+
+    def _make_groq(self):
         if self._groq is None:
             from .groq_client import STTAPI
             route = {}
@@ -336,6 +362,39 @@ def _request_with_retry(spec, path, settings, clients, warnings, number):
             warnings.append(f"part {number}: Live session failed ({exc}); retried in a new session")
 
 
+def _send_parts(send, chunks, workers):
+    """(result, error) for every part, in order, sending up to ``workers`` parts at a time.
+
+    A quota, feature or audio error is raised at once and the parts not yet sent are
+    dropped; any other error is returned for that part, so the rest still count.
+    """
+    fatal = (RateLimitError, UnsupportedFeatureError, AudioPreparationError)
+    stop = threading.Event()   # set by a fatal error, so no later part is sent
+
+    def attempt(number, chunk):
+        if stop.is_set():
+            return None, None
+        try:
+            return send(number, chunk), None
+        except fatal:
+            stop.set()
+            raise
+        except Exception as exc:
+            return None, exc
+    if workers <= 1 or len(chunks) <= 1:
+        for number, chunk in enumerate(chunks, start=1):
+            yield attempt(number, chunk)
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max_workers=min(workers, len(chunks)), thread_name_prefix="part")
+    try:
+        futures = [pool.submit(attempt, number, chunk) for number, chunk in enumerate(chunks, start=1)]
+        for future in futures:
+            yield future.result()
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 def describe(error):
     return f"{type(error).__name__}: {error}" if error is not None else None
 
@@ -421,6 +480,7 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
         duration = get_duration(str(prepared)) if converted else source_duration
         limit = _chunk_limit(spec, prepared, duration)
         settings["chunk_seconds"] = round(limit, 3)
+        settings["parallel_chunks"] = spec.parallel_chunks
         if duration is None:
             warnings.append("duration unknown (ffprobe could not read it); sent as one request without chunking")
             chunks = [AudioChunk(str(prepared), 0.0, None, 0)]
@@ -432,20 +492,21 @@ def transcribe_file(audio, spec: ModelSpec, *, language=None, prompt=None, tempe
             chunks = split_audio(str(prepared), chunk_sec=limit - overlap_seconds,
                                  overlap_sec=overlap_seconds, output_dir=str(work / "chunks"))
 
-        results, parts, errors, errors_by_part = [], [], [], {}
-        for number, chunk in enumerate(chunks, start=1):
+        def send(number, chunk):
             if len(chunks) > 1:
                 logger.info("%s: part %d/%d (%.0fs-%.0fs)", spec.name, number, len(chunks),
                             chunk.start_time, chunk.end_time)
-            try:
-                result = _request_with_retry(spec, Path(chunk.path), settings, clients, warnings, number)
-                if _failed(result):
-                    raise ValueError(f"part {number} returned {result['text'][:200]!r}")
-            except (RateLimitError, UnsupportedFeatureError, AudioPreparationError):
-                raise
-            except Exception as exc:
+            result = _request_with_retry(spec, Path(chunk.path), settings, clients, warnings, number)
+            if _failed(result):
+                raise ValueError(f"part {number} returned {result['text'][:200]!r}")
+            return result
+
+        results, parts, errors, errors_by_part = [], [], [], {}
+        outcomes = list(_send_parts(send, chunks, spec.parallel_chunks))
+        for number, (chunk, (result, exc)) in enumerate(zip(chunks, outcomes), start=1):
+            if exc is not None:
                 if len(chunks) == 1:
-                    raise
+                    raise exc
                 logger.error("%s: part %d failed: %s", spec.name, number, exc)
                 errors.append(exc)
                 errors_by_part[number] = exc

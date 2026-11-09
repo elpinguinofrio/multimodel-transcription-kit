@@ -34,10 +34,13 @@ corrections = [
 #   key_env     = env variable holding its key (optional for openai)
 #   base_url    = its address (default: the type's public one)
 #   costs_money = true -> tried only after every free route of every model has failed
+#   parallel_chunks = N -> send up to N parts of a long recording at once (default 1, one
+#                 after another); the shared limits still apply
 
 [[aistudio]]
 name = "my-aistudio"
 key_env = "GEMINI_API_KEY"
+parallel_chunks = 4
 
 # A second account of the same type, reached through a Gemini-compatible proxy.
 [[aistudio]]
@@ -45,6 +48,7 @@ name = "my-proxy"
 key_env = "PROXY_GEMINI_KEY"
 base_url = "http://127.0.0.1:8300"
 costs_money = true
+parallel_chunks = 4
 
 [[antigravity]]
 name = "my-agy"

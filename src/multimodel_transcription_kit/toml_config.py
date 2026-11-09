@@ -5,6 +5,7 @@
     key_env = "GEMINI_API_KEY"         # env variable holding its key (optional for openai)
     base_url = "http://127.0.0.1:8300" # optional; default: the type's public address
     costs_money = true                 # optional: tried only after every free route failed
+    parallel_chunks = 4                # optional: parts of a long recording sent at once (default 1)
 
     [[model]]                          # best first: the order of these blocks is the ranking
     name = "gemini-3.8-flash"
@@ -25,7 +26,7 @@ import json
 
 TYPES = {"aistudio": "gemini", "antigravity": "agy", "openai": "openai"}
 DEFAULT_BASE_URL = {"openai": "https://api.openai.com/v1"}
-PROVIDER_KEYS = {"name", "key_env", "base_url", "costs_money", "note"}
+PROVIDER_KEYS = {"name", "key_env", "base_url", "costs_money", "parallel_chunks", "note"}
 MODEL_KEYS = {"name", "providers", "word_times", "prompt", "temperature", "chunk_seconds", "merge_model",
               "capabilities", "rpm", "tpm", "rpd"}
 PLAIN_SECTIONS = ("secrets", "defaults", "limits", "vocabulary", "usage", "fusion")
@@ -76,6 +77,10 @@ def _providers(data):
                 raise ConfigError(f"two providers are named {name!r}")
             if type_name == "antigravity" and (block.get("base_url") or block.get("key_env")):
                 raise ConfigError(f"[[antigravity]] {name}: the agy CLI takes no base_url or key_env")
+            parallel = block.get("parallel_chunks", 1)
+            if isinstance(parallel, bool) or not isinstance(parallel, int) or parallel < 1:
+                raise ConfigError(f"[[{type_name}]] {name}: parallel_chunks must be a whole number of at "
+                                  f"least 1, not {parallel!r}")
             providers[name] = {"type": type_name, **block}
     return providers
 
@@ -117,6 +122,8 @@ def _routes(data, providers):
                 options["requires_env"] = provider["key_env"]
             if provider.get("costs_money"):
                 options["costs_money"] = "true"
+            if provider.get("parallel_chunks", 1) != 1:
+                options["parallel_chunks"] = str(provider["parallel_chunks"])
             routes.append((block, f"{name}@{provider_name}", options))
     return routes
 
@@ -223,6 +230,12 @@ def convert_ini(parser):
                 providers[pname] = ("openai", {"base_url": base})
         else:
             raise ConfigError(f"[model.{name}]: kind {kind!r} cannot be converted")
+        if options.get("parallel_chunks"):
+            settings = providers[pname][1]
+            parallel = int(options["parallel_chunks"])
+            if settings.setdefault("parallel_chunks", parallel) != parallel:
+                raise ConfigError(f"[model.{name}]: parallel_chunks {parallel} differs from another model "
+                                  f"on the same account ({settings['parallel_chunks']}); set one value")
         model_id = options.get("model") or name
         refs[name] = pname if model_id == name else f"{pname}:{model_id}"
     out.append("# Providers: one block per account. type = the block name: aistudio, antigravity, openai.")
@@ -249,7 +262,7 @@ def convert_ini(parser):
         if name in timing:
             out.append("word_times = true")
         for key, raw in options.items():
-            if key in ("kind", "model", "endpoint", "requires_env"):
+            if key in ("kind", "model", "endpoint", "requires_env", "parallel_chunks"):
                 continue
             if key not in MODEL_KEYS:
                 raise ConfigError(f"[model.{name}]: setting {key!r} has no TOML equivalent")

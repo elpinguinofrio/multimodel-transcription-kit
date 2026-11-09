@@ -18,7 +18,8 @@ do not already have a configuration**. It has two parts:
 - **Providers**: one `[[aistudio]]`, `[[antigravity]]` or `[[openai]]` block per
   account, each with your own `name` and optional `key_env`, `base_url` and
   `costs_money = true`. A proxy is just an account with its own `base_url`. A local
-  speech server is an `[[openai]]` account without a key.
+  speech server is an `[[openai]]` account without a key. `parallel_chunks = N`
+  sends up to N parts of a long recording at once (default 1, one after another).
 - **Models**, best first: one `[[model]]` block each, listing its `providers` in the
   order to try. `word_times = true` marks the models that may supply word times.
 
